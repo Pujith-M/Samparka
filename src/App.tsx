@@ -1,119 +1,100 @@
-const people = [
-  {
-    initials: 'AM',
-    name: 'A little more present',
-    detail: 'Make space for the people you love.',
-    color: 'peach',
-  },
-  {
-    initials: '♡',
-    name: 'Your people, in one place',
-    detail: 'A calmer way to keep everyone close.',
-    color: 'lavender',
-  },
-  {
-    initials: '✳',
-    name: 'Made for meaningful moments',
-    detail: 'Thoughtful connections start here.',
-    color: 'sage',
-  },
+import { useState } from 'react'
+
+type View = 'recent' | 'contacts' | 'add'
+
+const navigation = [
+  { id: 'recent' as const, label: 'Recent', icon: '◷' },
+  { id: 'contacts' as const, label: 'Contacts', icon: '◎' },
+  { id: 'add' as const, label: 'Add', icon: '+' },
 ]
 
-function App() {
+function EmptyState({ view, onAdd }: { view: 'recent' | 'contacts'; onAdd: () => void }) {
+  const isRecent = view === 'recent'
+
   return (
-    <main className="page-shell">
-      <header className="topbar">
-        <a className="brand" href="#home" aria-label="Samparka home">
-          <span className="brand-mark" aria-hidden="true">
-            s
-          </span>
+    <section className="empty-state" aria-labelledby={`${view}-empty-title`}>
+      <div className="empty-icon" aria-hidden="true">{isRecent ? '◷' : '◎'}</div>
+      <h2 id={`${view}-empty-title`}>{isRecent ? 'Nothing recent yet' : 'Your circle starts here'}</h2>
+      <p>
+        {isRecent
+          ? 'New and updated contacts will appear here.'
+          : 'Add the people who matter to you. Your contacts stay stored on this device.'}
+      </p>
+      {!isRecent && <button className="button button-primary" onClick={onAdd}>Add your first contact <span aria-hidden="true">+</span></button>}
+    </section>
+  )
+}
+
+function AddContact({ onBack }: { onBack: () => void }) {
+  return (
+    <section className="form-view" aria-labelledby="add-title">
+      <button className="back-button" onClick={onBack} aria-label="Back to contacts">← <span>Contacts</span></button>
+      <div className="view-heading form-heading">
+        <div>
+          <p className="eyebrow">New connection</p>
+          <h1 id="add-title">Add contact</h1>
+        </div>
+      </div>
+      <form className="contact-form" onSubmit={(event) => event.preventDefault()}>
+        <label>
+          Name
+          <input type="text" placeholder="Full name" />
+        </label>
+        <label>
+          Phone number
+          <input type="tel" placeholder="Phone number" />
+        </label>
+        <label>
+          Email <span className="optional">Optional</span>
+          <input type="email" placeholder="Email address" />
+        </label>
+        <p className="form-note">This is a preview of the contact form. Saving contacts will be available soon.</p>
+        <button className="button button-primary" type="submit" disabled>Save contact</button>
+      </form>
+    </section>
+  )
+}
+
+function App() {
+  const [view, setView] = useState<View>('contacts')
+  const pageTitle = view === 'recent' ? 'Recent' : 'Contacts'
+
+  const selectView = (nextView: View) => setView(nextView)
+
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <a className="brand" href="#contacts" onClick={() => selectView('contacts')} aria-label="Samparka contacts">
+          <span className="brand-mark" aria-hidden="true">s</span>
           <span>samparka</span>
         </a>
-        <span className="top-note">
-          <span className="status-dot" /> A little more connected
-        </span>
+        <button className="icon-button" aria-label="More options">•••</button>
       </header>
 
-      <section className="hero" id="home" aria-labelledby="hero-title">
-        <div className="hero-copy">
-          <p className="eyebrow">A softer way to stay close</p>
-          <h1 id="hero-title">
-            Good things grow
-            <br />
-            when we <em>keep in touch.</em>
-          </h1>
-          <p className="hero-description">
-            Life gets busy. Samparka helps you hold on to the little details and
-            make more room for the people who matter.
-          </p>
-          <a className="primary-action" href="mailto:hello@samparka.app">
-            Something lovely is on its way <span aria-hidden="true">↗</span>
-          </a>
-          <p className="quiet-note">A thoughtful little space, coming soon.</p>
-        </div>
+      <main className="main-content">
+        {view === 'add' ? <AddContact onBack={() => selectView('contacts')} /> : (
+          <>
+            <div className="view-heading">
+              <div>
+                <p className="eyebrow">Your people</p>
+                <h1>{pageTitle}</h1>
+              </div>
+              {view === 'contacts' && <button className="search-button" aria-label="Search contacts">⌕ <span>Search</span></button>}
+            </div>
+            <EmptyState view={view} onAdd={() => selectView('add')} />
+          </>
+        )}
+      </main>
 
-        <div className="visual" aria-label="Illustration of a note and flowers">
-          <div className="sun-wash" />
-          <div className="orbit orbit-one" />
-          <div className="orbit orbit-two" />
-          <div className="flower flower-one">
-            <i />
-            <i />
-            <i />
-            <i />
-            <b />
-          </div>
-          <div className="flower flower-two">
-            <i />
-            <i />
-            <i />
-            <i />
-            <b />
-          </div>
-          <div className="stem stem-one" />
-          <div className="stem stem-two" />
-          <div className="leaf leaf-one" />
-          <div className="leaf leaf-two" />
-          <div className="leaf leaf-three" />
-          <div className="note-card">
-            <div className="note-top">
-              <span className="mini-mark">s</span>
-              <span>JUST A NOTE</span>
-            </div>
-            <p>
-              Thinking of
-              <br />
-              you today.
-            </p>
-            <div className="note-heart">♡</div>
-            <span className="note-line" />
-          </div>
-          <div className="sparkle sparkle-a">✳</div>
-          <div className="sparkle sparkle-b">✦</div>
-        </div>
-      </section>
-
-      <section className="pillars" aria-label="What Samparka is about">
-        {people.map((item) => (
-          <article className="pillar" key={item.name}>
-            <div className={`pillar-icon ${item.color}`} aria-hidden="true">
-              {item.initials}
-            </div>
-            <div>
-              <h2>{item.name}</h2>
-              <p>{item.detail}</p>
-            </div>
-          </article>
+      <nav className="bottom-nav" aria-label="Primary navigation">
+        {navigation.map((item) => (
+          <button key={item.id} className={`nav-item ${view === item.id ? 'is-active' : ''}`} onClick={() => selectView(item.id)} aria-current={view === item.id ? 'page' : undefined}>
+            <span className={`nav-icon ${item.id === 'add' ? 'add-icon' : ''}`} aria-hidden="true">{item.icon}</span>
+            <span>{item.label}</span>
+          </button>
         ))}
-      </section>
-
-      <footer className="footer">
-        <span>Made with care, for the people you care about.</span>
-        <span>
-          Samparka <span aria-hidden="true">·</span> 2026
-        </span>
-      </footer>
-    </main>
+      </nav>
+    </div>
   )
 }
 
