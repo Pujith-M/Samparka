@@ -14,7 +14,7 @@ This repository is the starting point for that product. At present, it contains 
 | Web app manifest, icons, and service worker      | Configured                  |
 | App-shell precache and navigation fallback       | Configured                  |
 | Contact screens and CRUD                         | Planned                     |
-| IndexedDB persistence                            | Planned                     |
+| Typed contact model and IndexedDB repository     | In place                    |
 | Google Sheets authorization, backup, and restore | Future work; not configured |
 | Encryption, conflict handling, and AI features   | Longer-term ideas           |
 
@@ -65,23 +65,26 @@ flowchart TD
 
 The backup flow still needs design and implementation. It will need explicit authorization, a way to select or create the backup spreadsheet, and clear handling for network errors, token expiry, duplicate records, and edits made on more than one device.
 
-## Contact data model under consideration
+## Contact model and local storage
 
-A contact could use fields like these. This is a planning example, not an active database schema:
+Contacts are stored locally in a versioned IndexedDB database named `samparka`. The `contacts` object store is accessed through the `ContactRepository` interface in `src/contacts/contactRepository.ts`; UI code should use that boundary rather than opening IndexedDB directly. The repository has no network or AI-provider dependency, so reads and writes work offline.
+
+The typed model in `src/contacts/contact.ts` is:
 
 ```ts
 interface Contact {
   id: string
   name: string
-  phone?: string
-  email?: string
-  notes?: string
+  phoneNumbers: string[]
+  emails: string[]
+  description?: string
+  tags: string[]
   createdAt: number
   updatedAt: number
 }
 ```
 
-IndexedDB is the preferred direction for structured local data. A small wrapper can be selected when contact persistence is implemented. The current app does not save contacts.
+Names and phone numbers are required and trimmed; phone numbers remain strings so formatting and leading zeros are retained. Email addresses are optional and validated when present. Empty optional values become empty arrays or an omitted description. Tags are trimmed, blank values removed, and case-insensitive duplicates collapsed while retaining the first display spelling. Each contact receives a UUID and Unix epoch millisecond timestamps. Updates preserve the ID and creation time and advance the update time. Database schema changes should increment the IndexedDB version and add upgrade steps in the repository's `openDB` callback.
 
 ## Run the project
 
