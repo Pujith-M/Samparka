@@ -2,7 +2,7 @@
 
 **Samparka is planned as a private, offline-first place to keep contact details and the small things worth remembering about people.** The long-term direction is an installable web app that stores its data on the user's device and can optionally back it up to a spreadsheet in the user's own Google account.
 
-This repository is the starting point for that product. At present, it contains a responsive React and TypeScript placeholder screen, a Vite build, PWA manifest and service worker setup, and basic test and code-quality tooling. Contact management, browser storage, Google sign-in, and backup are not implemented yet.
+This repository contains a responsive React and TypeScript placeholder screen, a Vite build, PWA manifest and service worker setup, and a typed contact model with a local IndexedDB repository. Contact screens, Google sign-in, and backup are not implemented yet.
 
 ## Project status
 
@@ -21,20 +21,20 @@ This repository is the starting point for that product. At present, it contains 
 ## Product principles
 
 - **Local by default:** Contact data should live in the user's browser. No account or cloud service should be required for everyday use.
-- **Works without a connection:** The app shell should load offline after it has been cached. Contact data should remain available locally once local storage is implemented.
+- **Works without a connection:** The app shell should load offline after it has been cached. The contact repository reads and writes browser-local IndexedDB without a network connection.
 - **Optional backup:** A future Google Sheets integration should only run after the user explicitly connects it. The spreadsheet would belong to the user's Google account.
 - **Portable data:** Export and restore options should let people keep control of their information.
 - **Small client-only foundation:** The initial product is intended to run as a static web app without a Samparka-operated backend.
 
 ## Architecture direction
 
-The diagram shows the intended product architecture. The solid app shell and service-worker setup exist in this repository; the contact store and optional Google backup are planned components.
+The diagram shows the current product architecture and planned integrations. The app shell, service-worker setup, and contact store exist in this repository; optional Google backup is planned.
 
 ```mermaid
 flowchart LR
     Person[User] --> Browser[Browser or installed PWA]
     Browser --> UI[React interface]
-    UI --> Local[(Device contact store<br/>IndexedDB — planned)]
+    UI --> Local[(Device contact store<br/>IndexedDB)]
     SW[Service worker] --> Cache[(Cached app shell)]
     Browser <--> SW
     UI -. optional, after authorization .-> Auth[Google authorization — planned]
