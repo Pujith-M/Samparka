@@ -23,4 +23,12 @@ describe('contact selectors', () => {
   it('deduplicates tag choices by case while preserving readable spelling', () => {
     expect(getAvailableTags([contact({ tags: ['Work', 'work', ' FRIEND '] })])).toEqual(['FRIEND', 'Work'])
   })
+  it('searches every supported field and keeps repeated matches unique', () => {
+    const input = contact({ emails: ['MAYA@EXAMPLE.COM', 'other@example.com'], tags: ['Maya'] })
+    expect(selectContacts([input], { query: 'maya', selectedTag: null, sortOrder: 'name' })).toEqual([input])
+    expect(selectContacts([contact({ name: 'Other' }), input], { query: 'example', selectedTag: null, sortOrder: 'name' })).toHaveLength(2)
+  })
+  it('does not treat an empty or whitespace tag as an active filter', () => {
+    expect(selectContacts([contact()], { query: '', selectedTag: '   ', sortOrder: 'name' })).toEqual([contact()])
+  })
 })

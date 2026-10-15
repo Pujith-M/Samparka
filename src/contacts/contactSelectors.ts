@@ -52,7 +52,7 @@ export function selectContacts(contacts: readonly Contact[], criteria: ContactSe
 }
 
 export function hasActiveContactFilters(criteria: ContactSelectorCriteria): boolean {
-  return Boolean(normalizeText(criteria.query) || criteria.selectedTag)
+  return Boolean(normalizeText(criteria.query) || normalizeText(criteria.selectedTag ?? ''))
 }
 
 export function getContactSortLabel(sortOrder: ContactSortOrder): string {
