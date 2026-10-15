@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -44,7 +44,7 @@ describe('Samparka app shell', () => {
     expect(screen.getByRole('heading', { name: 'Add contact' })).toBeInTheDocument()
     expect(screen.getByLabelText(/^Name/)).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /contacts/i }))
+    await user.click(within(screen.getByRole('navigation', { name: /primary/i })).getByRole('button', { name: 'Contacts' }))
     expect(screen.getByRole('heading', { name: 'Contacts' })).toBeInTheDocument()
   })
 
@@ -52,7 +52,7 @@ describe('Samparka app shell', () => {
     const user = userEvent.setup()
     render(<App repository={makeRepository()} />)
 
-    await user.click(screen.getByRole('button', { name: /add your first contact/i }))
+    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
     expect(screen.getByRole('heading', { name: 'Add contact' })).toBeInTheDocument()
   })
 
@@ -60,7 +60,7 @@ describe('Samparka app shell', () => {
     const user = userEvent.setup()
     const repository = makeRepository()
     render(<App repository={repository} />)
-    await user.click(screen.getByRole('button', { name: /add your first contact/i }))
+    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
     await user.type(screen.getByLabelText(/^Name/), 'Maya Rao')
     await user.type(screen.getByLabelText('Phone number 1'), '555-0100')
     await user.click(screen.getByRole('button', { name: 'Save contact' }))
@@ -90,14 +90,70 @@ describe('Samparka app shell', () => {
     expect(screen.getByRole('heading', { name: 'Contacts' })).toBeInTheDocument()
   })
 
+  it('renders only approved contact fields and labels description correctly', async () => {
+    const user = userEvent.setup()
+    render(<App repository={makeRepository()} />)
+    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
+
+    expect(screen.queryByLabelText('Company')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Job title')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Address')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Notes')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/description/i)).toBeInTheDocument()
+    expect(screen.getByLabelText('Phone number 1')).toBeInTheDocument()
+    expect(screen.getByLabelText('Email address 1')).toBeInTheDocument()
+  })
+
+  it('uses domain validation for phone, email, and tags while preserving form input', async () => {
+    const user = userEvent.setup()
+    const repository = makeRepository()
+    render(<App repository={repository} />)
+    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
+    await user.type(screen.getByLabelText(/^Name/), '  Maya Rao  ')
+    await user.type(screen.getByLabelText('Phone number 1'), ' +001-0200 ')
+    await user.type(screen.getByLabelText('Email address 1'), 'not-an-email')
+    await user.type(screen.getByLabelText(/description/i), '  Studio friend  ')
+    await user.type(screen.getByLabelText(/tags/i), ' Friend, friend, work ')
+    await user.click(screen.getByRole('button', { name: 'Save contact' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/not a valid email/i)
+    expect(screen.getByLabelText('Phone number 1')).toHaveValue(' +001-0200 ')
+    expect(repository.create).not.toHaveBeenCalled()
+
+    await user.clear(screen.getByLabelText('Email address 1'))
+    await user.type(screen.getByLabelText('Email address 1'), 'maya@example.com')
+    await user.click(screen.getByRole('button', { name: 'Save contact' }))
+    expect(await screen.findByRole('heading', { name: 'Maya Rao' })).toBeInTheDocument()
+    expect(repository.create).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Maya Rao',
+      phoneNumbers: ['+001-0200'],
+      emails: ['maya@example.com'],
+      description: 'Studio friend',
+      tags: ['Friend', 'work'],
+    }))
+  })
+
   it('rejects a blank name and keeps the form available', async () => {
     const user = userEvent.setup()
     const repository = makeRepository()
     render(<App repository={repository} />)
-    await user.click(screen.getByRole('button', { name: /add your first contact/i }))
+    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
     await user.type(screen.getByLabelText('Phone number 1'), '555-0100')
     await user.click(screen.getByRole('button', { name: 'Save contact' }))
     expect(screen.getByRole('alert')).toHaveTextContent('Name is required.')
+    expect(repository.create).not.toHaveBeenCalled()
+  })
+
+  it('rejects whitespace-only phone numbers without discarding the form', async () => {
+    const user = userEvent.setup()
+    const repository = makeRepository()
+    render(<App repository={repository} />)
+    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
+    await user.type(screen.getByLabelText(/^Name/), 'Maya Rao')
+    await user.type(screen.getByLabelText('Phone number 1'), '   ')
+    await user.click(screen.getByRole('button', { name: 'Save contact' }))
+    expect(screen.getByRole('alert')).toHaveTextContent(/at least one non-empty phone/i)
+    expect(screen.getByLabelText('Phone number 1')).toHaveValue('   ')
     expect(repository.create).not.toHaveBeenCalled()
   })
 })

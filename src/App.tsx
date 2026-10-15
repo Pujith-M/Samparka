@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { ContactValidationError } from './contacts/contact'
+import { ContactValidationError, normalizeContact } from './contacts/contact'
 import type { Contact, ContactInput } from './contacts/contact'
 import { contactRepository } from './contacts/contactRepository'
 import type { ContactRepository } from './contacts/contactRepository'
@@ -30,6 +30,8 @@ function ContactForm({ initialValues, busy, error, onCancel, onSave }: ContactFo
   const [values, setValues] = useState<FormValues>(() => toFormValues(initialValues))
   const [validationError, setValidationError] = useState<string | null>(null)
 
+  // Form state must reset when switching between add and edit modes.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setValues(toFormValues(initialValues)), [initialValues])
 
   const updateList = (field: 'phoneNumbers' | 'emails', index: number, value: string) => {
@@ -41,33 +43,27 @@ function ContactForm({ initialValues, busy, error, onCancel, onSave }: ContactFo
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setValidationError(null)
-    if (!values.name.trim()) {
-      setValidationError('Name is required.')
-      return
-    }
     try {
-      await onSave({ ...values, tags: values.tags ?? [] })
+      const normalized = normalizeContact({ ...values, tags: values.tags ?? [] })
+      await onSave(normalized)
     } catch (saveError) {
       setValidationError(saveError instanceof ContactValidationError ? saveError.message : 'Could not save this contact. Your entries are still here to retry.')
     }
   }
 
   return <form className="contact-form" onSubmit={submit} noValidate aria-busy={busy}>
-    {(validationError || error) && <div className="alert alert-error" role="alert">{validationError || error}</div>}
-    <label>Name <span className="required">Required</span><input autoFocus name="name" value={values.name} onChange={(event) => setValues({ ...values, name: event.target.value })} placeholder="Full name" aria-invalid={Boolean(validationError)} /></label>
+    {(validationError || error) && <div id="contact-form-error" className="alert alert-error" role="alert">{validationError || error}</div>}
+    <label htmlFor="contact-name">Name <span className="required">Required</span><input id="contact-name" autoFocus name="name" value={values.name} onChange={(event) => setValues({ ...values, name: event.target.value })} placeholder="Full name" aria-invalid={Boolean(validationError)} aria-describedby={(validationError || error) ? 'contact-form-error' : undefined} /></label>
     <fieldset><legend>Phone numbers <span className="required">At least one required</span></legend>{values.phoneNumbers.map((phone, index) => <div className="repeat-row" key={`phone-${index}`}><input aria-label={`Phone number ${index + 1}`} type="tel" value={phone} onChange={(event) => updateList('phoneNumbers', index, event.target.value)} placeholder="Phone number" />{values.phoneNumbers.length > 1 && <button type="button" className="remove-button" onClick={() => removeListItem('phoneNumbers', index)} aria-label={`Remove phone number ${index + 1}`}>Remove</button>}</div>)}<button type="button" className="text-button" onClick={() => addListItem('phoneNumbers')}>+ Add phone number</button></fieldset>
     <fieldset><legend>Email addresses <span className="optional">Optional</span></legend>{(values.emails ?? []).map((email, index) => <div className="repeat-row" key={`email-${index}`}><input aria-label={`Email address ${index + 1}`} type="email" value={email} onChange={(event) => updateList('emails', index, event.target.value)} placeholder="Email address" />{(values.emails ?? []).length > 1 && <button type="button" className="remove-button" onClick={() => removeListItem('emails', index)} aria-label={`Remove email address ${index + 1}`}>Remove</button>}</div>)}<button type="button" className="text-button" onClick={() => addListItem('emails')}>+ Add email address</button></fieldset>
-    <label>Company <span className="optional">Optional</span><input placeholder="Company" /></label>
-    <label>Job title <span className="optional">Optional</span><input placeholder="Job title" /></label>
-    <label>Address <span className="optional">Optional</span><input placeholder="Address" /></label>
-    <label>Notes <span className="optional">Optional</span><textarea value={values.description ?? ''} onChange={(event) => setValues({ ...values, description: event.target.value })} placeholder="Add a note" rows={4} /></label>
+    <label htmlFor="contact-description">Description <span className="optional">Optional · brief context about this person</span><textarea id="contact-description" value={values.description ?? ''} onChange={(event) => setValues({ ...values, description: event.target.value })} placeholder="What should you remember about this person?" rows={4} /></label>
     <label>Tags <span className="optional">Optional, comma separated</span><input value={(values.tags ?? []).join(', ')} onChange={(event) => setValues({ ...values, tags: event.target.value.split(',') })} placeholder="Friend, work" /></label>
     <div className="form-actions"><button type="button" className="button button-secondary" onClick={onCancel}>Cancel</button><button className="button button-primary" type="submit" disabled={busy}>{busy ? 'Saving…' : initialValues ? 'Save changes' : 'Save contact'}</button></div>
   </form>
 }
 
 function ContactDetail({ contact, onBack, onEdit, onDelete }: { contact: Contact; onBack: () => void; onEdit: () => void; onDelete: () => void }) {
-  return <section className="detail-view" aria-labelledby="detail-title"><button className="back-button" onClick={onBack}>← <span>Contacts</span></button><div className="detail-heading"><div className="avatar" aria-hidden="true">{contact.name.slice(0, 1).toUpperCase()}</div><div><p className="eyebrow">Contact</p><h1 id="detail-title">{contact.name}</h1></div></div><div className="detail-card">{contact.phoneNumbers.length > 0 && <DetailRow label="Phone" values={contact.phoneNumbers} />}{contact.emails.length > 0 && <DetailRow label="Email" values={contact.emails} />}{contact.description && <DetailRow label="Notes" values={[contact.description]} />}{contact.tags.length > 0 && <div className="detail-row"><span>Tags</span><div className="tags">{contact.tags.map((tag) => <span className="tag" key={tag}>{tag}</span>)}</div></div>}</div><div className="detail-actions"><button className="button button-secondary" onClick={onDelete}>Delete contact</button><button className="button button-primary" onClick={onEdit}>Edit contact</button></div></section>
+  return <section className="detail-view" aria-labelledby="detail-title"><button className="back-button" onClick={onBack}>← <span>Contacts</span></button><div className="detail-heading"><div className="avatar" aria-hidden="true">{contact.name.slice(0, 1).toUpperCase()}</div><div><p className="eyebrow">Contact</p><h1 id="detail-title">{contact.name}</h1></div></div><div className="detail-card">{contact.phoneNumbers.length > 0 && <DetailRow label="Phone" values={contact.phoneNumbers} />}{contact.emails.length > 0 && <DetailRow label="Email" values={contact.emails} />}{contact.description && <DetailRow label="Description" values={[contact.description]} />}{contact.tags.length > 0 && <div className="detail-row"><span>Tags</span><div className="tags">{contact.tags.map((tag) => <span className="tag" key={tag}>{tag}</span>)}</div></div>}</div><div className="detail-actions"><button className="button button-secondary" onClick={onDelete}>Delete contact</button><button className="button button-primary" onClick={onEdit}>Edit contact</button></div></section>
 }
 function DetailRow({ label, values }: { label: string; values: string[] }) { return <div className="detail-row"><span>{label}</span><div>{values.map((value) => <p key={value}>{value}</p>)}</div></div> }
 
@@ -80,6 +76,8 @@ function App({ repository = contactRepository }: { repository?: ContactRepositor
   const [busy, setBusy] = useState(false)
 
   const loadContacts = useCallback(async () => { setLoading(true); setError(null); try { setContacts(await repository.list()) } catch { setError('Your contacts could not be loaded. Try again.') } finally { setLoading(false) } }, [repository])
+  // Load persisted contacts when the repository changes.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void loadContacts() }, [loadContacts])
 
   const saveContact = async (values: FormValues) => { setBusy(true); try { const saved = selected ? await repository.update(selected.id, values) : await repository.create(values); setSelected(saved); await loadContacts(); setView('detail') } finally { setBusy(false) } }
