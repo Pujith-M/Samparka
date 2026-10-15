@@ -144,6 +144,43 @@ describe('Samparka app shell', () => {
     expect(repository.create).not.toHaveBeenCalled()
   })
 
+  it('keeps a failed contact read distinct from an empty address book', async () => {
+    const user = userEvent.setup()
+    const repository = makeRepository()
+    vi.mocked(repository.list).mockRejectedValue(new Error('offline'))
+    render(<App repository={repository} />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be loaded/i)
+    expect(screen.queryByText(/your circle starts here/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /add your first contact/i })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(repository.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('associates validation errors with the relevant fields and preserves values after save failure', async () => {
+    const user = userEvent.setup()
+    const repository = makeRepository()
+    vi.mocked(repository.create).mockRejectedValue(new Error('offline'))
+    render(<App repository={repository} />)
+    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
+    await user.type(screen.getByLabelText(/^Name/), 'Maya Rao')
+    await user.type(screen.getByLabelText('Phone number 1'), '555-0100')
+    await user.type(screen.getByLabelText('Email address 1'), 'bad-email')
+    await user.click(screen.getByRole('button', { name: 'Save contact' }))
+
+    const email = screen.getByLabelText('Email address 1')
+    expect(email).toHaveAttribute('aria-invalid', 'true')
+    expect(email).toHaveAttribute('aria-describedby', 'email-error')
+    expect(screen.getAllByText(/not a valid email/i)).toHaveLength(2)
+
+    await user.clear(email)
+    await user.type(email, 'maya@example.com')
+    await user.click(screen.getByRole('button', { name: 'Save contact' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be saved/i)
+    expect(screen.getByLabelText(/^Name/)).toHaveValue('Maya Rao')
+    expect(screen.getByLabelText('Email address 1')).toHaveValue('maya@example.com')
+  })
+
   it('rejects whitespace-only phone numbers without discarding the form', async () => {
     const user = userEvent.setup()
     const repository = makeRepository()
