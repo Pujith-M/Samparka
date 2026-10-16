@@ -104,9 +104,9 @@ export function GoogleSheetsSpike({ onClose }: { onClose: () => void }) {
       <p className="eyebrow">Feasibility spike</p>
       <h1 id="google-title">Google Sheets</h1>
       <p className="spike-copy">
-        Authorize this browser, choose one spreadsheet, and inspect a worksheet
-        preview. Contact data remains local unless you explicitly run a write
-        below.
+        Choose one of two supported options: connect an existing worksheet that
+        already uses the complete Samparka schema, or create a new Samparka
+        worksheet. Individual columns are never added to an existing sheet.
       </p>
       {message && (
         <p className="alert" role="status">
@@ -120,7 +120,7 @@ export function GoogleSheetsSpike({ onClose }: { onClose: () => void }) {
             onClick={connect}
             disabled={busy}
           >
-            {busy ? 'Waiting for Google…' : 'Choose an existing spreadsheet'}
+            {busy ? 'Waiting for Google…' : 'Choose an existing Samparka sheet'}
           </button>
           <label className="select-field" htmlFor="new-spreadsheet-title">
             New spreadsheet name
@@ -135,7 +135,7 @@ export function GoogleSheetsSpike({ onClose }: { onClose: () => void }) {
             onClick={createSpreadsheet}
             disabled={busy || !newSpreadsheetTitle.trim()}
           >
-            {busy ? 'Creating…' : 'Create and select new spreadsheet'}
+            {busy ? 'Creating…' : 'Create new Samparka sheet'}
           </button>
           <p className="spike-copy">
             A new file is created in the signed-in user’s Google Drive.

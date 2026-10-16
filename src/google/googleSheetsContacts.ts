@@ -1,7 +1,6 @@
 import type { Contact } from '../contacts/contact'
 import { GoogleIntegrationError, SheetsApi } from './googleSheets'
 import {
-  CONTACT_HEADERS,
   contactToRow,
   findContactRow,
   parseContactRow,
@@ -10,13 +9,9 @@ import {
 } from './googleSheetsSchema'
 
 export type SheetLocation = { spreadsheetId: string; worksheet: string }
-export type ConsentHandler = (missing: readonly string[]) => Promise<boolean>
 
 export class GoogleSheetsContactAdapter {
-  constructor(
-    private readonly api: SheetsApi,
-    private readonly consent: ConsentHandler = async () => false,
-  ) {}
+  constructor(private readonly api: SheetsApi) {}
 
   private async validated(
     location: SheetLocation,
@@ -32,32 +27,6 @@ export class GoogleSheetsContactAdapter {
       requireArchiveColumn: requireArchive,
     })
     return { validation, values }
-  }
-
-  private async ensureColumns(
-    location: SheetLocation,
-    token: string,
-    values: string[][],
-    names: string[],
-  ) {
-    const headers = values[0] ?? []
-    const missing = names.filter((name) => !headers.includes(name))
-    if (!missing.length) return values
-    if (!(await this.consent(missing)))
-      throw new GoogleIntegrationError(
-        `Consent is required before adding: ${missing.join(', ')}.`,
-        'api',
-      )
-    await this.api.updateValues(
-      location.spreadsheetId,
-      `${location.worksheet}!A1`,
-      [[...headers, ...missing]],
-      token,
-    )
-    return [
-      [...headers, ...missing],
-      ...values.slice(1).map((row) => [...row, ...missing.map(() => '')]),
-    ]
   }
 
   async list(
@@ -81,14 +50,7 @@ export class GoogleSheetsContactAdapter {
       `${location.worksheet}!A:ZZ`,
       token,
     )
-    const headers = values[0] ?? []
-    const missing = CONTACT_HEADERS.filter(
-      (header) => !headers.includes(header),
-    )
-    const prepared = missing.length
-      ? await this.ensureColumns(location, token, values, missing)
-      : values
-    const validation = validateSheetRows(prepared).headers
+    const validation = validateSheetRows(values).headers
     await this.api.appendRow(
       location.spreadsheetId,
       location.worksheet,
@@ -140,11 +102,7 @@ export class GoogleSheetsContactAdapter {
     archivedAt: number | null,
     token: string,
   ) {
-    let { validation, values } = await this.validated(location, token)
-    if (validation.archiveColumn === undefined) {
-      values = await this.ensureColumns(location, token, values, ['archivedAt'])
-      validation = validateSheetRows(values)
-    }
+    const { validation } = await this.validated(location, token, true)
     const rowNumber = findContactRow(validation, id)
     if (rowNumber < 0)
       throw new GoogleIntegrationError(`Contact “${id}” was not found.`, 'api')

@@ -1,6 +1,8 @@
 import type { Contact } from '../contacts/contact'
+import { CONTACT_HEADERS } from './googleSheetsSchema'
 
 export const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
+export const SAMPARKA_WORKSHEET = 'Contacts'
 const GIS_URL = 'https://accounts.google.com/gsi/client'
 const GAPI_URL = 'https://apis.google.com/js/api.js'
 
@@ -272,7 +274,19 @@ export class SheetsApi {
     }>(
       'https://sheets.googleapis.com/v4/spreadsheets?fields=spreadsheetId,properties.title',
       token,
-      { method: 'POST', body: JSON.stringify({ properties: { title } }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          properties: { title },
+          sheets: [{ properties: { title: SAMPARKA_WORKSHEET } }],
+        }),
+      },
+    )
+    await this.updateValues(
+      result.spreadsheetId,
+      `${SAMPARKA_WORKSHEET}!A1`,
+      [ [...CONTACT_HEADERS] ],
+      token,
     )
     return { id: result.spreadsheetId, name: result.properties.title }
   }

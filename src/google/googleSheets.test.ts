@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { GoogleIntegrationError, SheetsApi } from './googleSheets'
+import { CONTACT_HEADERS } from './googleSheetsSchema'
 
 describe('SheetsApi', () => {
   it('reads spreadsheet metadata and a worksheet preview with the user token', async () => {
@@ -71,11 +72,13 @@ describe('SheetsApi', () => {
   })
 
   it('creates a spreadsheet and returns it as the selected file', async () => {
-    const fetcher = vi.fn().mockResolvedValue(
-      Response.json({
-        spreadsheetId: 'new-id',
-        properties: { title: 'My new sheet' },
-      }),
+    const fetcher = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        Response.json({
+          spreadsheetId: 'new-id',
+          properties: { title: 'My new sheet' },
+        }),
+      ),
     )
     const result = await new SheetsApi(fetcher).createSpreadsheet(
       'My new sheet',
@@ -86,6 +89,11 @@ describe('SheetsApi', () => {
     expect(fetcher.mock.calls[0][1]?.method).toBe('POST')
     expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({
       properties: { title: 'My new sheet' },
+      sheets: [{ properties: { title: 'Contacts' } }],
+    })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toEqual({
+      values: [[...CONTACT_HEADERS]],
     })
   })
 
@@ -102,29 +110,6 @@ describe('SheetsApi', () => {
     await expect(
       new SheetsApi(fetcher).createSpreadsheet('My new sheet', 'token'),
     ).resolves.toEqual({ id: 'new-id', name: 'My new sheet' })
-  })
-
-  it('requires explicit consent before writing metadata columns', async () => {
-    const fetcher = vi.fn().mockResolvedValue(Response.json({}))
-    const api = new SheetsApi(fetcher)
-    await expect(
-      api.addMetadataColumns(
-        'sheet',
-        'Contacts!I1:J1',
-        [['Samparka ID', 'Archived']],
-        'token',
-        false,
-      ),
-    ).rejects.toThrow(/Explicit consent/)
-    expect(fetcher).not.toHaveBeenCalled()
-    await api.addMetadataColumns(
-      'sheet',
-      'Contacts!I1:J1',
-      [['Samparka ID', 'Archived']],
-      'token',
-      true,
-    )
-    expect(fetcher).toHaveBeenCalledOnce()
   })
 
   it('returns a reconnectable expiry error for unauthorized API responses', async () => {
