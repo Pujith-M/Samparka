@@ -277,13 +277,23 @@ export class SheetsApi {
     return { id: result.spreadsheetId, name: result.properties.title }
   }
 
+  async readValues(spreadsheetId: string, range: string, token: string): Promise<string[][]> {
+    const result = await this.request<{ values?: string[][] }>(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}`,
+      token,
+    )
+    return result.values ?? []
+  }
+
   async appendRow(
     spreadsheetId: string,
     worksheet: string,
     contact: Contact,
     token: string,
+    headers = ['id', 'name', 'phoneNumbers', 'emails', 'description', 'tags', 'createdAt', 'updatedAt', 'archivedAt', 'schemaVersion'],
   ): Promise<void> {
-    const range = `${worksheet}!A:H`
+    const range = `${worksheet}!A:ZZ`
+    const { contactToRow } = await import('./googleSheetsSchema')
     await this.request(
       `${`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}:append`}?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
       token,
@@ -291,23 +301,14 @@ export class SheetsApi {
         method: 'POST',
         body: JSON.stringify({
           values: [
-            [
-              contact.id,
-              contact.name,
-              JSON.stringify(contact.phoneNumbers),
-              JSON.stringify(contact.emails),
-              contact.description ?? '',
-              JSON.stringify(contact.tags),
-              contact.createdAt,
-              contact.updatedAt,
-            ],
+            contactToRow(contact, headers),
           ],
         }),
       },
     )
   }
 
-  async updateRow(
+  async updateValues(
     spreadsheetId: string,
     range: string,
     values: string[][],
@@ -318,6 +319,10 @@ export class SheetsApi {
       token,
       { method: 'PUT', body: JSON.stringify({ values }) },
     )
+  }
+
+  async updateRow(spreadsheetId: string, range: string, values: string[][], token: string): Promise<void> {
+    return this.updateValues(spreadsheetId, range, values, token)
   }
 
   async addMetadataColumns(

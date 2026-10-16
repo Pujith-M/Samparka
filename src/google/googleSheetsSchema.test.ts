@@ -38,6 +38,8 @@ describe('Google Sheets contact schema', () => {
   })
 
   it('requires archive metadata before archive operations', () => {
-    expect(() => validateSheetRows([CONTACT_HEADERS.slice(0, -1), row.slice(0, -1)], { requireArchiveColumn: true })).toThrow(/Archive metadata/)
+    const headers = CONTACT_HEADERS.filter((header) => header !== 'archivedAt')
+    const values = contactToRow(contact, headers)
+    expect(() => validateSheetRows([headers, values], { requireArchiveColumn: true })).toThrow(/Archive metadata/)
   })
 })

@@ -63,8 +63,10 @@ describe('SheetsApi', () => {
       '["a@example.com"]',
       '',
       '["friend"]',
-      1,
-      2,
+      '1',
+      '2',
+      '',
+      '1.0',
     ])
   })
 
