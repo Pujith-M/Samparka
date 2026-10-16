@@ -7,6 +7,7 @@ export interface Contact {
   tags: string[]
   createdAt: number
   updatedAt: number
+  archivedAt?: number
 }
 
 export type ContactInput = Pick<Contact, 'name' | 'phoneNumbers'> &

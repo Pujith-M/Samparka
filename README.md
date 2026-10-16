@@ -6,15 +6,16 @@ This checkout contains the React, TypeScript, and Vite foundation, PWA setup, ty
 
 ## Project status
 
-| Area | Status |
-| --- | --- |
-| React, TypeScript, Vite, Tailwind, and PWA foundation (Issue #1) | In place |
-| Typed contact model and IndexedDB repository (Issue #2) | In place |
-| Mobile-first app shell and navigation (Issue #3) | In place |
-| Contact list, detail, and manual CRUD (Issue #4) | In progress; see the open issue and its pull request |
-| Local search, sorting, and tag filtering (Issue #5) | Planned |
-| Google sign-in, spreadsheet backup/restore, and synchronization | Future work; not configured |
-| Encryption, conflict handling, and AI-generated tag suggestions | Future decisions; not implemented |
+| Area                                                             | Status                                                                                            |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| React, TypeScript, Vite, Tailwind, and PWA foundation (Issue #1) | In place                                                                                          |
+| Typed contact model and IndexedDB repository (Issue #2)          | In place                                                                                          |
+| Mobile-first app shell and navigation (Issue #3)                 | In place                                                                                          |
+| Contact list, detail, and manual CRUD (Issue #4)                 | In progress; see the open issue and its pull request                                              |
+| Local search, sorting, and tag filtering (Issue #5)              | Planned                                                                                           |
+| Google Sheets feasibility spike (GIS, Picker, Sheets API)        | Implemented as an opt-in demo; requires Google Cloud configuration and a real-account smoke check |
+| Production Google sign-in, backup/restore, and synchronization   | Future work; not implemented                                                                      |
+| Encryption, conflict handling, and AI-generated tag suggestions  | Future decisions; not implemented                                                                 |
 
 ## Product principles
 
@@ -62,6 +63,8 @@ flowchart TD
 ```
 
 The backup flow still needs design and implementation. It will need explicit authorization, a way to select or create the backup spreadsheet, and clear handling for network errors, token expiry, duplicate records, and edits made on more than one device.
+
+An opt-in Google Sheets feasibility screen is available from the app header. It exercises browser authorization, existing spreadsheet selection, creating and selecting a new spreadsheet, metadata/preview reads, and explicit sample-row append. It is a spike, not the contact sync workflow: configure it using [Google Sheets setup](docs/google-sheets-setup.md), review the [authorization ADR](docs/adr/0001-google-sheets-browser-authorization.md), and complete the documented real-account smoke check before depending on Google access. It keeps the access token in memory and does not sync local contacts.
 
 ## Contact model and local storage
 
@@ -147,7 +150,7 @@ The first five issues establish the app foundation and core contact workflow:
 4. [Issue #4](https://github.com/Pujith-M/Samparka/issues/4) — implement the contact list, detail view, and manual create/read/update/delete workflow. In progress.
 5. [Issue #5](https://github.com/Pujith-M/Samparka/issues/5) — add local search across name, phone numbers, email addresses, description, and tags; sorting by name or most recently updated; and tag filtering. Planned.
 
-After these, decide and document export/restore and optional spreadsheet backup requirements before implementing authorization, backup, or cross-device synchronization. Keep encryption, conflict handling, and AI-generated tag suggestions as separate future decisions. Tags themselves are part of the contact model and are user-editable; AI tag generation is not implemented.
+After these, finish the Google Sheets feasibility spike checks and define export/restore and optional spreadsheet backup requirements before implementing production backup or cross-device synchronization. Issues #14 and #15 define the schema and offline queue work. Keep encryption, conflict handling, and AI-generated tag suggestions as separate future decisions. Tags themselves are part of the contact model and are user-editable; AI tag generation is not implemented.
 
 ## Technology
 
