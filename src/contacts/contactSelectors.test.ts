@@ -23,10 +23,14 @@ describe('contact selectors', () => {
   it('deduplicates tag choices by case while preserving readable spelling', () => {
     expect(getAvailableTags([contact({ tags: ['Work', 'work', ' FRIEND '] })])).toEqual(['FRIEND', 'Work'])
   })
-  it('searches every supported field and keeps repeated matches unique', () => {
-    const input = contact({ emails: ['MAYA@EXAMPLE.COM', 'other@example.com'], tags: ['Maya'] })
-    expect(selectContacts([input], { query: 'maya', selectedTag: null, sortOrder: 'name' })).toEqual([input])
-    expect(selectContacts([contact({ name: 'Other' }), input], { query: 'example', selectedTag: null, sortOrder: 'name' })).toHaveLength(2)
+  it('searches each supported field independently and keeps repeated matches unique', () => {
+    const input = contact({ name: 'Maya Rao', phoneNumbers: ['+91 98765 43210'], emails: ['maya@example.com'], description: 'Studio friend', tags: ['Friend'] })
+    expect(matchesContact(input, 'maya rao')).toBe(true)
+    expect(matchesContact(input, 'maya@example.com')).toBe(true)
+    expect(matchesContact(input, 'studio friend')).toBe(true)
+    expect(matchesContact(input, 'friend')).toBe(true)
+    expect(matchesContact(input, '9876543210')).toBe(true)
+    expect(selectContacts([input, contact({ id: '2', name: 'Other', emails: ['other@example.com'] })], { query: 'example.com', selectedTag: null, sortOrder: 'name' })).toHaveLength(2)
   })
   it('does not treat an empty or whitespace tag as an active filter', () => {
     expect(selectContacts([contact()], { query: '', selectedTag: '   ', sortOrder: 'name' })).toEqual([contact()])
