@@ -162,3 +162,15 @@ After these, finish the Google Sheets feasibility spike checks and define export
 - ESLint and Prettier for code quality and formatting
 
 The dependency versions are recorded in `package-lock.json`; use `npm install` to install the locked project dependencies. TypeScript is on 6.0.3, the newest release supported by the current `typescript-eslint` release. TypeScript 7 is newer, but that linter currently rejects it.
+
+## GitHub Pages deployment
+
+The production site is published at https://pujith-m.github.io/Samparka/.
+
+- The app is built with Vite using the repository-site base path `/Samparka/`. Do not change this to `/` unless the repository becomes a user/organization Pages site or uses a custom domain at the root.
+- `.github/workflows/deploy-pages.yml` runs lint, tests, a production build, and output-path smoke checks on pull requests and pushes to `main`.
+- Only a successful push or manual run on `main` can deploy. Pull requests are build-only and never publish.
+- The deployment job uses the verified build artifact from the build job and the official GitHub Pages actions.
+- To enable publishing, open **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**.
+
+The workflow deliberately fails before deployment if the Vite output, PWA manifest, service worker, or repository asset prefix is missing. Keep the Pages base path, manifest start URL, manifest scope, and icon URLs aligned with the repository URL.
