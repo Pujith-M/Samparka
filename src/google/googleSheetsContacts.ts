@@ -60,6 +60,39 @@ export class GoogleSheetsContactAdapter {
     )
   }
 
+  async converge(
+    location: SheetLocation,
+    contact: Contact,
+    token: string,
+    allowCreate: boolean,
+  ): Promise<void> {
+    const { validation } = await this.validated(location, token)
+    const rowNumber = findContactRow(validation, contact.id)
+    if (rowNumber < 0) {
+      if (!allowCreate) {
+        throw new GoogleIntegrationError(
+          'This contact is missing from the selected sheet. Review the sheet before retrying.',
+          'api',
+        )
+      }
+      await this.api.appendRow(
+        location.spreadsheetId,
+        location.worksheet,
+        contact,
+        token,
+        validation.headers,
+      )
+      return
+    }
+    const existing = validation.rows[rowNumber - 2]
+    await this.api.updateValues(
+      location.spreadsheetId,
+      `${location.worksheet}!A${rowNumber}`,
+      [contactToRow(contact, validation.headers, existing)],
+      token,
+    )
+  }
+
   async update(
     location: SheetLocation,
     contact: Contact,
@@ -86,6 +119,16 @@ export class GoogleSheetsContactAdapter {
     id: string,
     token: string,
   ): Promise<void> {
+    await this.setArchive(location, id, Date.now(), token)
+  }
+
+  async archiveIfPresent(
+    location: SheetLocation,
+    id: string,
+    token: string,
+  ): Promise<void> {
+    const { validation } = await this.validated(location, token, true)
+    if (findContactRow(validation, id) < 0) return
     await this.setArchive(location, id, Date.now(), token)
   }
   async restore(

@@ -60,6 +60,27 @@ describe('contact model and IndexedDB repository', () => {
     expect(await repository.list()).toEqual([])
   })
 
+  it('writes ordered, PII-free change events with each local mutation', async () => {
+    const original = await repository.create({ name: 'Mira', phoneNumbers: ['00123'] })
+    await repository.update(original.id, { name: 'Mira Rao' })
+    await repository.delete(original.id)
+
+    const events = await repository.listPendingChanges()
+    expect(events.map(({ sequence, contactId, operation, status, attempts }) => ({
+      sequence, contactId, operation, status, attempts,
+    }))).toEqual([
+      { sequence: 1, contactId: original.id, operation: 'create', status: 'pending', attempts: 0 },
+      { sequence: 2, contactId: original.id, operation: 'update', status: 'pending', attempts: 0 },
+      { sequence: 3, contactId: original.id, operation: 'archive', status: 'pending', attempts: 0 },
+    ])
+    expect(events.every((event) => !('name' in event) && !('phoneNumbers' in event))).toBe(true)
+  })
+
+  it('does not enqueue a delete for a missing contact', async () => {
+    await repository.delete('missing-contact')
+    expect(await repository.listPendingChanges()).toEqual([])
+  })
+
   it('keeps contacts after closing and reopening the database', async () => {
     const original = await repository.create({ name: 'Mira', phoneNumbers: ['00123'] })
     await repository.close()

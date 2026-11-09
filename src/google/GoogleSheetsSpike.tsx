@@ -6,6 +6,9 @@ import {
   requestGoogleAccessToken,
 } from './googleSheets'
 import type { SelectedSpreadsheet, SheetPreview } from './googleSheets'
+import { GoogleSheetsContactAdapter } from './googleSheetsContacts'
+import { syncGoogleChanges } from './googleSheetsSync'
+import type { ContactRepository } from '../contacts/contactRepository'
 
 const config = {
   clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '',
@@ -13,10 +16,18 @@ const config = {
   appId: import.meta.env.VITE_GOOGLE_APP_ID ?? '',
 }
 const sheets = new SheetsApi()
+const contactAdapter = new GoogleSheetsContactAdapter(sheets)
+const savedSheetKey = 'samparka.google.sheet.v1'
+type SavedSpreadsheet = SelectedSpreadsheet & { worksheet: string }
 
-export function GoogleSheetsSpike({ onClose }: { onClose: () => void }) {
+export function GoogleSheetsSpike({ onClose, repository }: { onClose: () => void; repository: ContactRepository }) {
   const [token, setToken] = useState<{ value: string; expiresAt: number }>()
-  const [spreadsheet, setSpreadsheet] = useState<SelectedSpreadsheet>()
+  const [spreadsheet, setSpreadsheet] = useState<SavedSpreadsheet | undefined>(() => {
+    try {
+      const value = localStorage.getItem(savedSheetKey)
+      return value ? JSON.parse(value) as SavedSpreadsheet : undefined
+    } catch { return undefined }
+  })
   const [preview, setPreview] = useState<SheetPreview>()
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
@@ -67,9 +78,10 @@ export function GoogleSheetsSpike({ onClose }: { onClose: () => void }) {
       trace('picker.opened')
       const selected = await pickSpreadsheet(config, auth.accessToken)
       trace('picker.spreadsheetSelected')
-      setSpreadsheet(selected)
       trace('preview.requested')
-      setPreview(await sheets.preview(selected.id, auth.accessToken))
+      const sheetPreview = await sheets.preview(selected.id, auth.accessToken)
+      saveSpreadsheet(selected, sheetPreview.worksheets[0]?.title ?? 'Sheet1')
+      setPreview(sheetPreview)
       trace('preview.completed')
       setMessage(
         `Connected to ${selected.name}. The access token stays in memory and expires automatically.`,
@@ -89,12 +101,45 @@ export function GoogleSheetsSpike({ onClose }: { onClose: () => void }) {
         accessToken,
       )
       trace('sheets.create.responseReceived')
-      setSpreadsheet(selected)
       trace('preview.requested')
-      setPreview(await sheets.preview(selected.id, accessToken))
+      const sheetPreview = await sheets.preview(selected.id, accessToken)
+      saveSpreadsheet(selected, sheetPreview.worksheets[0]?.title ?? 'Sheet1')
+      setPreview(sheetPreview)
       trace('preview.completed')
       setMessage(`Created and selected ${selected.name} in your Google Drive.`)
     })
+
+  const saveSpreadsheet = (selected: SelectedSpreadsheet, worksheet: string) => {
+    const saved = { ...selected, worksheet }
+    setSpreadsheet(saved)
+    localStorage.setItem(savedSheetKey, JSON.stringify(saved))
+  }
+
+  const backUpChanges = () => void run('backupChanges', async () => {
+    let activeToken = token
+    if (!activeToken || activeToken.expiresAt <= Date.now()) {
+      const auth = await requestGoogleAccessToken(config)
+      activeToken = { value: auth.accessToken, expiresAt: auth.expiresAt }
+      setToken(activeToken)
+    }
+    let destination = spreadsheet
+    if (!destination) {
+      const picked = await pickSpreadsheet(config, activeToken.value)
+      const sheetPreview = await sheets.preview(picked.id, activeToken.value)
+      destination = { ...picked, worksheet: sheetPreview.worksheets[0]?.title ?? 'Sheet1' }
+      saveSpreadsheet(picked, destination.worksheet)
+      setPreview(sheetPreview)
+    }
+    const result = await syncGoogleChanges(repository, contactAdapter, {
+      spreadsheetId: destination.id,
+      worksheet: destination.worksheet,
+    }, activeToken.value)
+    setMessage(result.blocked
+      ? `${result.completed} change(s) backed up; ${result.blocked} need review.`
+      : result.paused
+        ? `${result.completed} change(s) backed up. Remaining changes are waiting to retry or reconnect.`
+        : `${result.completed} change(s) backed up; ${result.pending} remain pending.`)
+  })
 
   return (
     <section className="form-view" aria-labelledby="google-title">
@@ -153,9 +198,13 @@ export function GoogleSheetsSpike({ onClose }: { onClose: () => void }) {
               setSpreadsheet(undefined)
               setPreview(undefined)
               setToken(undefined)
+              localStorage.removeItem(savedSheetKey)
             }}
           >
             Disconnect
+          </button>
+          <button className="button button-primary" onClick={backUpChanges} disabled={busy}>
+            {busy ? 'Backing up…' : 'Back up pending changes'}
           </button>
           {preview && (
             <>

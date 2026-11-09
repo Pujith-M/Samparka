@@ -17,6 +17,8 @@ function makeRepository(initial: Contact[] = []): ContactRepository {
     create: vi.fn(async (input) => { const now = Date.now(); const contact = { ...input, id: 'created-id', createdAt: now, updatedAt: now, emails: input.emails ?? [], description: input.description, tags: input.tags ?? [] } as Contact; contacts = [...contacts, contact]; return contact }),
     update: vi.fn(async (id, changes) => { const current = contacts.find((contact) => contact.id === id)!; const updated = { ...current, ...changes, updatedAt: current.updatedAt + 1 } as Contact; contacts = contacts.map((contact) => contact.id === id ? updated : contact); return updated }),
     delete: vi.fn(async (id) => { contacts = contacts.filter((contact) => contact.id !== id) }),
+    listPendingChanges: vi.fn(async () => []),
+    updateChange: vi.fn(async () => undefined),
   }
 }
 
