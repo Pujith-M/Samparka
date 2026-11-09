@@ -1,4 +1,10 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -14,24 +20,78 @@ function makeRepository(initial: Contact[] = []): ContactRepository {
   return {
     list: vi.fn(async () => contacts),
     getById: vi.fn(async (id) => contacts.find((contact) => contact.id === id)),
-    create: vi.fn(async (input) => { const now = Date.now(); const contact = { ...input, id: 'created-id', createdAt: now, updatedAt: now, emails: input.emails ?? [], description: input.description, tags: input.tags ?? [] } as Contact; contacts = [...contacts, contact]; return contact }),
-    update: vi.fn(async (id, changes) => { const current = contacts.find((contact) => contact.id === id)!; const updated = { ...current, ...changes, updatedAt: current.updatedAt + 1 } as Contact; contacts = contacts.map((contact) => contact.id === id ? updated : contact); return updated }),
-    delete: vi.fn(async (id) => { contacts = contacts.filter((contact) => contact.id !== id) }),
+    create: vi.fn(async (input) => {
+      const now = Date.now()
+      const contact = {
+        ...input,
+        id: 'created-id',
+        createdAt: now,
+        updatedAt: now,
+        emails: input.emails ?? [],
+        description: input.description,
+        tags: input.tags ?? [],
+      } as Contact
+      contacts = [...contacts, contact]
+      return contact
+    }),
+    update: vi.fn(async (id, changes) => {
+      const current = contacts.find((contact) => contact.id === id)!
+      const updated = {
+        ...current,
+        ...changes,
+        updatedAt: current.updatedAt + 1,
+      } as Contact
+      contacts = contacts.map((contact) =>
+        contact.id === id ? updated : contact,
+      )
+      return updated
+    }),
+    delete: vi.fn(async (id) => {
+      contacts = contacts.filter((contact) => contact.id !== id)
+    }),
     listPendingChanges: vi.fn(async () => []),
+    listChanges: vi.fn(async () => []),
     updateChange: vi.fn(async () => undefined),
+    retryBlockedChanges: vi.fn(async () => 0),
+    importRemoteContacts: vi.fn(async () => ({
+      imported: 0,
+      preservedLocal: 0,
+      skippedPendingArchive: 0,
+    })),
+    acquireSyncLease: vi.fn(async () => true),
+    renewSyncLease: vi.fn(async () => true),
+    releaseSyncLease: vi.fn(async () => undefined),
   }
 }
 
-const savedContact: Contact = { id: 'contact-1', name: 'Maya Rao', phoneNumbers: ['555-0100'], emails: ['maya@example.com'], description: 'Met at the studio', tags: ['friend'], createdAt: 1, updatedAt: 2 }
+const savedContact: Contact = {
+  id: 'contact-1',
+  name: 'Maya Rao',
+  phoneNumbers: ['555-0100'],
+  emails: ['maya@example.com'],
+  description: 'Met at the studio',
+  tags: ['friend'],
+  createdAt: 1,
+  updatedAt: 2,
+}
 
 describe('Samparka app shell', () => {
   it('opens on Contacts with the primary navigation visible', async () => {
     render(<App repository={makeRepository()} />)
 
-    expect(screen.getByRole('heading', { name: 'Contacts' })).toBeInTheDocument()
-    expect(await screen.findByText(/your circle starts here/i)).toBeInTheDocument()
-    expect(screen.getByRole('navigation', { name: /primary/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Contacts' })).toHaveAttribute('aria-current', 'page')
+    expect(
+      screen.getByRole('heading', { name: 'Contacts' }),
+    ).toBeInTheDocument()
+    expect(
+      await screen.findByText(/your circle starts here/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('navigation', { name: /primary/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Contacts' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
   })
 
   it('navigates between Recent, Contacts, and Add views', async () => {
@@ -43,30 +103,47 @@ describe('Samparka app shell', () => {
     expect(screen.getByText(/nothing recent yet/i)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Add' }))
-    expect(screen.getByRole('heading', { name: 'Add contact' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'Add contact' }),
+    ).toBeInTheDocument()
     expect(screen.getByLabelText(/^Name/)).toBeInTheDocument()
 
-    await user.click(within(screen.getByRole('navigation', { name: /primary/i })).getByRole('button', { name: 'Contacts' }))
-    expect(screen.getByRole('heading', { name: 'Contacts' })).toBeInTheDocument()
+    await user.click(
+      within(screen.getByRole('navigation', { name: /primary/i })).getByRole(
+        'button',
+        { name: 'Contacts' },
+      ),
+    )
+    expect(
+      screen.getByRole('heading', { name: 'Contacts' }),
+    ).toBeInTheDocument()
   })
 
   it('offers a first-contact action from the empty Contacts state', async () => {
     const user = userEvent.setup()
     render(<App repository={makeRepository()} />)
 
-    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
-    expect(screen.getByRole('heading', { name: 'Add contact' })).toBeInTheDocument()
+    await user.click(
+      await screen.findByRole('button', { name: /add your first contact/i }),
+    )
+    expect(
+      screen.getByRole('heading', { name: 'Add contact' }),
+    ).toBeInTheDocument()
   })
 
   it('creates a contact and opens its saved detail view', async () => {
     const user = userEvent.setup()
     const repository = makeRepository()
     render(<App repository={repository} />)
-    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
+    await user.click(
+      await screen.findByRole('button', { name: /add your first contact/i }),
+    )
     await user.type(screen.getByLabelText(/^Name/), 'Maya Rao')
     await user.type(screen.getByLabelText('Phone number 1'), '555-0100')
     await user.click(screen.getByRole('button', { name: 'Save contact' }))
-    expect(await screen.findByRole('heading', { name: 'Maya Rao' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { name: 'Maya Rao' }),
+    ).toBeInTheDocument()
     expect(repository.create).toHaveBeenCalledOnce()
   })
 
@@ -82,20 +159,31 @@ describe('Samparka app shell', () => {
     await user.clear(name)
     await user.type(name, 'Maya Updated')
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
-    expect(await screen.findByRole('heading', { name: 'Maya Updated' })).toBeInTheDocument()
-    expect(repository.update).toHaveBeenCalledWith('contact-1', expect.objectContaining({ name: 'Maya Updated' }))
+    expect(
+      await screen.findByRole('heading', { name: 'Maya Updated' }),
+    ).toBeInTheDocument()
+    expect(repository.update).toHaveBeenCalledWith(
+      'contact-1',
+      expect.objectContaining({ name: 'Maya Updated' }),
+    )
     await user.click(screen.getByRole('button', { name: 'Delete contact' }))
     expect(repository.delete).not.toHaveBeenCalled()
     vi.mocked(window.confirm).mockReturnValue(true)
     await user.click(screen.getByRole('button', { name: 'Delete contact' }))
-    await waitFor(() => expect(repository.delete).toHaveBeenCalledWith('contact-1'))
-    expect(screen.getByRole('heading', { name: 'Contacts' })).toBeInTheDocument()
+    await waitFor(() =>
+      expect(repository.delete).toHaveBeenCalledWith('contact-1'),
+    )
+    expect(
+      screen.getByRole('heading', { name: 'Contacts' }),
+    ).toBeInTheDocument()
   })
 
   it('renders only approved contact fields and labels description correctly', async () => {
     const user = userEvent.setup()
     render(<App repository={makeRepository()} />)
-    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
+    await user.click(
+      await screen.findByRole('button', { name: /add your first contact/i }),
+    )
 
     expect(screen.queryByLabelText('Company')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Job title')).not.toBeInTheDocument()
@@ -110,7 +198,9 @@ describe('Samparka app shell', () => {
     const user = userEvent.setup()
     const repository = makeRepository()
     render(<App repository={repository} />)
-    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
+    await user.click(
+      await screen.findByRole('button', { name: /add your first contact/i }),
+    )
     await user.type(screen.getByLabelText(/^Name/), '  Maya Rao  ')
     await user.type(screen.getByLabelText('Phone number 1'), ' +001-0200 ')
     await user.type(screen.getByLabelText('Email address 1'), 'not-an-email')
@@ -123,23 +213,32 @@ describe('Samparka app shell', () => {
     expect(repository.create).not.toHaveBeenCalled()
 
     await user.clear(screen.getByLabelText('Email address 1'))
-    await user.type(screen.getByLabelText('Email address 1'), 'maya@example.com')
+    await user.type(
+      screen.getByLabelText('Email address 1'),
+      'maya@example.com',
+    )
     await user.click(screen.getByRole('button', { name: 'Save contact' }))
-    expect(await screen.findByRole('heading', { name: 'Maya Rao' })).toBeInTheDocument()
-    expect(repository.create).toHaveBeenCalledWith(expect.objectContaining({
-      name: 'Maya Rao',
-      phoneNumbers: ['+001-0200'],
-      emails: ['maya@example.com'],
-      description: 'Studio friend',
-      tags: ['Friend', 'work'],
-    }))
+    expect(
+      await screen.findByRole('heading', { name: 'Maya Rao' }),
+    ).toBeInTheDocument()
+    expect(repository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Maya Rao',
+        phoneNumbers: ['+001-0200'],
+        emails: ['maya@example.com'],
+        description: 'Studio friend',
+        tags: ['Friend', 'work'],
+      }),
+    )
   })
 
   it('rejects a blank name and keeps the form available', async () => {
     const user = userEvent.setup()
     const repository = makeRepository()
     render(<App repository={repository} />)
-    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
+    await user.click(
+      await screen.findByRole('button', { name: /add your first contact/i }),
+    )
     await user.type(screen.getByLabelText('Phone number 1'), '555-0100')
     await user.click(screen.getByRole('button', { name: 'Save contact' }))
     expect(screen.getByRole('alert')).toHaveTextContent('Name is required.')
@@ -152,9 +251,15 @@ describe('Samparka app shell', () => {
     vi.mocked(repository.list).mockRejectedValue(new Error('offline'))
     render(<App repository={repository} />)
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be loaded/i)
-    expect(screen.queryByText(/your circle starts here/i)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /add your first contact/i })).not.toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /could not be loaded/i,
+    )
+    expect(
+      screen.queryByText(/your circle starts here/i),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /add your first contact/i }),
+    ).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     expect(repository.list).toHaveBeenCalledTimes(2)
   })
@@ -164,7 +269,9 @@ describe('Samparka app shell', () => {
     const repository = makeRepository()
     vi.mocked(repository.create).mockRejectedValue(new Error('offline'))
     render(<App repository={repository} />)
-    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
+    await user.click(
+      await screen.findByRole('button', { name: /add your first contact/i }),
+    )
     await user.type(screen.getByLabelText(/^Name/), 'Maya Rao')
     await user.type(screen.getByLabelText('Phone number 1'), '555-0100')
     await user.type(screen.getByLabelText('Email address 1'), 'bad-email')
@@ -178,20 +285,28 @@ describe('Samparka app shell', () => {
     await user.clear(email)
     await user.type(email, 'maya@example.com')
     await user.click(screen.getByRole('button', { name: 'Save contact' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be saved/i)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /could not be saved/i,
+    )
     expect(screen.getByLabelText(/^Name/)).toHaveValue('Maya Rao')
-    expect(screen.getByLabelText('Email address 1')).toHaveValue('maya@example.com')
+    expect(screen.getByLabelText('Email address 1')).toHaveValue(
+      'maya@example.com',
+    )
   })
 
   it('rejects whitespace-only phone numbers without discarding the form', async () => {
     const user = userEvent.setup()
     const repository = makeRepository()
     render(<App repository={repository} />)
-    await user.click(await screen.findByRole('button', { name: /add your first contact/i }))
+    await user.click(
+      await screen.findByRole('button', { name: /add your first contact/i }),
+    )
     await user.type(screen.getByLabelText(/^Name/), 'Maya Rao')
     await user.type(screen.getByLabelText('Phone number 1'), '   ')
     await user.click(screen.getByRole('button', { name: 'Save contact' }))
-    expect(screen.getByRole('alert')).toHaveTextContent(/at least one non-empty phone/i)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /at least one non-empty phone/i,
+    )
     expect(screen.getByLabelText('Phone number 1')).toHaveValue('   ')
     expect(repository.create).not.toHaveBeenCalled()
   })

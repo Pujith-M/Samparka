@@ -1,33 +1,33 @@
 # Samparka
 
-**Samparka is a local-first contact app in development.** Its direction is an installable PWA for keeping contact details and useful context on the user's device. Optional backup to a spreadsheet in the user's own Google account is a future direction; it is not implemented.
+**Samparka is a local-first contact app in development.** It is an installable PWA for keeping contact details and useful context on the user's device. Contacts are saved locally first. An opt-in Google Sheets flow can import contacts and manually back up queued local changes to a selected spreadsheet.
 
-This checkout contains the React, TypeScript, and Vite foundation, PWA setup, typed contact model with a local IndexedDB repository, and mobile-first contact app shell. The current list and add-contact form are placeholders; functional contact CRUD is tracked in Issue #4, and search, sorting, and tag filtering are tracked in Issue #5. Google sign-in and backup are not implemented.
+This checkout contains the React, TypeScript, and Vite foundation, PWA setup, typed contact model, local IndexedDB repository, contact CRUD, local search/filter/sort, and an opt-in Google Sheets connector with a durable local outbox. Google access requires Cloud configuration and a real-account smoke check. The sync flow is still in development.
 
 ## Project status
 
-| Area                                                             | Status                                                                                            |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| React, TypeScript, Vite, Tailwind, and PWA foundation (Issue #1) | In place                                                                                          |
-| Typed contact model and IndexedDB repository (Issue #2)          | In place                                                                                          |
-| Mobile-first app shell and navigation (Issue #3)                 | In place                                                                                          |
-| Contact list, detail, and manual CRUD (Issue #4)                 | In progress; see the open issue and its pull request                                              |
-| Local search, sorting, and tag filtering (Issue #5)              | Planned                                                                                           |
-| Google Sheets feasibility spike (GIS, Picker, Sheets API)        | Implemented as an opt-in demo; requires Google Cloud configuration and a real-account smoke check |
-| Production Google sign-in, backup/restore, and synchronization   | Future work; not implemented                                                                      |
-| Encryption, conflict handling, and AI-generated tag suggestions  | Future decisions; not implemented                                                                 |
+| Area                                                             | Status                                                                          |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| React, TypeScript, Vite, Tailwind, and PWA foundation (Issue #1) | In place                                                                        |
+| Typed contact model and IndexedDB repository (Issue #2)          | In place                                                                        |
+| Mobile-first app shell and navigation (Issue #3)                 | In place                                                                        |
+| Contact list, detail, and manual CRUD (Issue #4)                 | Implemented                                                                     |
+| Local search, sorting, and tag filtering (Issue #5)              | Implemented                                                                     |
+| Google Sheets import and queued backup                           | In progress; requires Google Cloud configuration and a real-account smoke check |
+| Multi-device synchronization and automatic background execution  | Not implemented                                                                 |
+| Encryption, conflict handling, and AI-generated tag suggestions  | Future decisions; not implemented                                               |
 
 ## Product principles
 
 - **Local by default:** Contact data should live in the user's browser. No account or cloud service should be required for everyday use.
 - **Works without a connection:** The app shell should load offline after it has been cached. The contact repository reads and writes browser-local IndexedDB without a network connection.
-- **Optional backup:** A future Google Sheets integration should only run after the user explicitly connects it. The spreadsheet would belong to the user's Google account.
+- **Optional backup:** Google Sheets access runs only after the user explicitly authorizes and selects a spreadsheet. The spreadsheet belongs to the user's Google account.
 - **Portable data:** Export and restore options are future work and should let people keep control of their information.
 - **Small client-only foundation:** The initial product is intended to run as a static web app without a Samparka-operated backend.
 
 ## Architecture direction
 
-The diagram shows the intended product architecture and planned integrations. The PWA setup, mobile-first app shell, and contact store exist in this checkout. Functional contact management and organization are being delivered through Issues #4 and #5; optional Google backup is future work.
+The diagram shows the current local-first architecture and the optional Sheets consumer. The local repository and outbox are durable in IndexedDB; the Google consumer uses them only after user authorization.
 
 ```mermaid
 flowchart LR
@@ -36,8 +36,8 @@ flowchart LR
     UI --> Local[(Device contact store<br/>IndexedDB)]
     SW[Service worker] --> Cache[(Cached app shell)]
     Browser <--> SW
-    UI -. optional, after authorization .-> Auth[Google authorization — planned]
-    Auth -. access token .-> Sheets[Google Sheets API — planned]
+    UI -. optional, after authorization .-> Auth[Google authorization]
+    Auth -. in-memory access token .-> Sheets[Google Sheets API]
     Sheets <--> Book[(User-owned spreadsheet)]
 ```
 
@@ -45,30 +45,34 @@ The service worker is configured to precache the production app shell and use th
 
 ## Intended contact and backup flow
 
-This flow describes the intended behavior after contact CRUD and optional backup are built. The current checkout has the app shell and placeholder contact views, but not a saved-contact workflow or backup.
+Contacts are saved locally first. A user can explicitly import remote-only rows or back up queued local changes to the selected sheet.
 
 ```mermaid
 flowchart TD
     Start[Open Samparka] --> Load[Load app shell from network or service-worker cache]
     Load --> Read[Read contacts from device storage]
     Read --> Edit[Add or view a contact]
-    Edit --> Save[Save locally first]
-    Save --> Choice{Has the user connected backup?}
-    Choice -- No --> Done[Continue offline; no cloud request]
-    Choice -- Yes --> Online{Network available?}
-    Online -- No --> Queue[Keep local change for later backup]
-    Online -- Yes --> Sync[Send authorized change to user's spreadsheet]
-    Queue --> Online
+    Edit --> Save[Save contact and outbox event atomically]
+    Save --> Choice{User connects and selects a sheet?}
+    Choice -- No --> Done[Keep using local contacts]
+    Choice -- Yes --> Auth[Authorize with Google]
+    Auth --> Online{Network and valid token?}
+    Online -- No --> Queue[Keep event pending]
+    Online -- Yes --> Sync[Replay changes by stable contact ID]
+    Queue --> Resume[Retry after reconnect or resume]
+    Resume --> Sync
     Sync --> Done
 ```
 
-The backup flow still needs design and implementation. It will need explicit authorization, a way to select or create the backup spreadsheet, and clear handling for network errors, token expiry, duplicate records, and edits made on more than one device.
+The outbox survives reloads. The browser consumer runs after authorization, on reconnect/resume while the token is still valid, and from the explicit backup action. It does not run while the app is closed. Local records win when an imported stable ID already exists; remote-only contacts are imported without overwriting local records.
 
-An opt-in Google Sheets feasibility screen is available from the app header. It exercises browser authorization, existing spreadsheet selection, creating and selecting a new spreadsheet, metadata/preview reads, and explicit sample-row append. It is a spike, not the contact sync workflow: configure it using [Google Sheets setup](docs/google-sheets-setup.md), review the [authorization ADR](docs/adr/0001-google-sheets-browser-authorization.md), and complete the documented real-account smoke check before depending on Google access. It keeps the access token in memory and does not sync local contacts.
+The Google Sheets screen supports authorization and selection, explicit import, and queued one-way backup. It keeps the token in memory and stores only the selected sheet ID/name/worksheet locally. See [Google Sheets setup](docs/google-sheets-setup.md) and the [authorization ADR](docs/adr/0001-google-sheets-browser-authorization.md). Complete the real-account smoke check before relying on live Google access.
+
+The [privacy policy](public/privacy.html) describes browser storage, Google access, and disconnect behavior. The [release checklist](docs/release-checklist.md) tracks the remaining public-beta checks.
 
 ## Contact model and local storage
 
-The repository stores contacts locally in a versioned IndexedDB database named `samparka`. The `contacts` object store is accessed through the `ContactRepository` interface in `src/contacts/contactRepository.ts`; UI code should use that boundary rather than opening IndexedDB directly. The repository has no network or AI-provider dependency, so reads and writes work offline. In this checkout, the repository is implemented, but the placeholder UI does not yet save or load contacts through it.
+The repository stores contacts and the durable change outbox locally in a versioned IndexedDB database named `samparka`. The stores are accessed through the `ContactRepository` interface in `src/contacts/contactRepository.ts`; UI code should use that boundary rather than opening IndexedDB directly. Contact changes and their outbox events commit in one transaction. Sync uses Web Locks where available and a renewable IndexedDB lease otherwise, so stale leases expire after a crashed tab. The repository has no network or AI-provider dependency, so reads and writes work offline.
 
 The typed model in `src/contacts/contact.ts` is:
 
@@ -126,17 +130,16 @@ Run `npm run format` to apply Prettier formatting. The smoke test uses Vitest an
 
 The production build includes a web app manifest, PNG and SVG placeholder icons, and a Workbox service worker. The service worker precaches the generated app shell and falls back to `index.html` for navigation requests. It has no runtime API caching rules.
 
-A deployed PWA needs a secure context, normally HTTPS. `localhost` is treated as secure for local development. Offline support in this checkout covers the app shell and the repository can read/write IndexedDB without a network connection. The placeholder contact views do not yet use the repository, and the service worker does not cache contact data. Placeholder typography loads from Google Fonts when a network connection is available and falls back to local system fonts otherwise.
+A deployed PWA needs a secure context, normally HTTPS. `localhost` is treated as secure for local development. The app shell and IndexedDB contact/outbox data work offline; the service worker caches the app shell, not the contact data. Google backup requires connectivity and an authorized in-memory token.
 
 ## Deployment direction
 
-The project is a static Vite app and can be hosted on a static HTTPS host such as GitHub Pages. A deployment workflow and GitHub Pages base-path configuration have not been added yet. Before publishing from a repository subpath, configure Vite's `base` value to match that path and add a deployment workflow. Verify the published manifest, icon URLs, service-worker scope, installation prompt, and app-shell loading while offline.
+The project is a static Vite app deployed to GitHub Pages. Local development uses `/`; production builds use the repository base path `/Samparka/`. The GitHub Actions workflow builds and verifies the Pages artifact on pull requests and deploys only from `main`.
 
 ## Privacy and security direction
 
-- The current UI has the contact app shell and placeholder views, but no working contact-management flow, sign-in, or synchronization. The contact model and local storage repository are implemented; the UI does not yet save contacts through them.
-- Clearing browser storage or changing devices can remove the only local copy. An export or backup path should be available before relying on the app for important information.
-- Any future Google integration should request only the access it needs and explain what information will be written to the selected spreadsheet. OAuth client identifiers are not private secrets; private keys and service-account credentials must never be shipped in frontend code.
+- Contacts and queued operations are stored in browser IndexedDB. Clearing browser storage or changing devices can remove the only local copy; export/restore is not implemented.
+- Google access uses a short-lived token held in memory. The OAuth client ID, API key, and project number are public browser configuration; private keys and service-account credentials must never be shipped in frontend code.
 - Data in a Google spreadsheet would follow that spreadsheet's sharing and account settings. A client-only app does not make a shared spreadsheet private.
 - Encryption and multi-device conflict resolution are not implemented. Their requirements should be decided before backup is treated as a reliable sync system.
 
@@ -147,10 +150,10 @@ The first five issues establish the app foundation and core contact workflow:
 1. [Issue #1](https://github.com/Pujith-M/Samparka/issues/1) — initialize the React/TypeScript PWA foundation. Completed.
 2. [Issue #2](https://github.com/Pujith-M/Samparka/issues/2) — define the contact model and IndexedDB repository. Completed.
 3. [Issue #3](https://github.com/Pujith-M/Samparka/issues/3) — build the mobile-first app shell and navigation. Completed and present in this checkout.
-4. [Issue #4](https://github.com/Pujith-M/Samparka/issues/4) — implement the contact list, detail view, and manual create/read/update/delete workflow. In progress.
-5. [Issue #5](https://github.com/Pujith-M/Samparka/issues/5) — add local search across name, phone numbers, email addresses, description, and tags; sorting by name or most recently updated; and tag filtering. Planned.
+4. [Issue #4](https://github.com/Pujith-M/Samparka/issues/4) — implement the contact list, detail view, and manual create/read/update/delete workflow. Completed.
+5. [Issue #5](https://github.com/Pujith-M/Samparka/issues/5) — add local search across name, phone numbers, email addresses, description, and tags; sorting by name or most recently updated; and tag filtering. Completed.
 
-After these, finish the Google Sheets feasibility spike checks and define export/restore and optional spreadsheet backup requirements before implementing production backup or cross-device synchronization. Issues #14 and #15 define the schema and offline queue work. Keep encryption, conflict handling, and AI-generated tag suggestions as separate future decisions. Tags themselves are part of the contact model and are user-editable; AI tag generation is not implemented.
+The next work is completing initial sync recovery, safe archive/restore flows, and beta readiness for the optional Google connector. Export/restore, multi-device conflict handling, and AI-generated tag suggestions remain future decisions. Tags are user-editable; AI tag generation is not implemented.
 
 ## Technology
 

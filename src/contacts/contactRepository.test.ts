@@ -1,7 +1,10 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ContactValidationError } from './contact'
-import { ContactStorageError, IndexedDbContactRepository } from './contactRepository'
+import {
+  ContactStorageError,
+  IndexedDbContactRepository,
+} from './contactRepository'
 
 const databaseName = 'samparka-test-contacts'
 const repository = new IndexedDbContactRepository(databaseName)
@@ -17,12 +20,12 @@ afterEach(async () => {
 
 describe('contact model and IndexedDB repository', () => {
   it('rejects missing names and phone numbers with useful validation errors', async () => {
-    await expect(repository.create({ name: '  ', phoneNumbers: ['123'] })).rejects.toThrow(
-      ContactValidationError,
-    )
-    await expect(repository.create({ name: 'Mira', phoneNumbers: ['  '] })).rejects.toThrow(
-      /at least one non-empty phone number/i,
-    )
+    await expect(
+      repository.create({ name: '  ', phoneNumbers: ['123'] }),
+    ).rejects.toThrow(ContactValidationError)
+    await expect(
+      repository.create({ name: 'Mira', phoneNumbers: ['  '] }),
+    ).rejects.toThrow(/at least one non-empty phone number/i)
   })
 
   it('normalizes optional fields and deduplicates tags case-insensitively', async () => {
@@ -46,12 +49,22 @@ describe('contact model and IndexedDB repository', () => {
   })
 
   it('supports create, get, list, update, and delete while preserving identity and creation time', async () => {
-    const original = await repository.create({ name: 'Mira', phoneNumbers: ['00123'] })
+    const original = await repository.create({
+      name: 'Mira',
+      phoneNumbers: ['00123'],
+    })
     expect(await repository.getById(original.id)).toEqual(original)
     expect(await repository.list()).toEqual([original])
 
-    const updated = await repository.update(original.id, { name: 'Mira Rao', tags: ['Friend'] })
-    expect(updated).toMatchObject({ id: original.id, createdAt: original.createdAt, name: 'Mira Rao' })
+    const updated = await repository.update(original.id, {
+      name: 'Mira Rao',
+      tags: ['Friend'],
+    })
+    expect(updated).toMatchObject({
+      id: original.id,
+      createdAt: original.createdAt,
+      name: 'Mira Rao',
+    })
     expect(updated.updatedAt).toBeGreaterThan(original.updatedAt)
     expect(await repository.getById(original.id)).toEqual(updated)
 
@@ -61,19 +74,48 @@ describe('contact model and IndexedDB repository', () => {
   })
 
   it('writes ordered, PII-free change events with each local mutation', async () => {
-    const original = await repository.create({ name: 'Mira', phoneNumbers: ['00123'] })
+    const original = await repository.create({
+      name: 'Mira',
+      phoneNumbers: ['00123'],
+    })
     await repository.update(original.id, { name: 'Mira Rao' })
     await repository.delete(original.id)
 
     const events = await repository.listPendingChanges()
-    expect(events.map(({ sequence, contactId, operation, status, attempts }) => ({
-      sequence, contactId, operation, status, attempts,
-    }))).toEqual([
-      { sequence: 1, contactId: original.id, operation: 'create', status: 'pending', attempts: 0 },
-      { sequence: 2, contactId: original.id, operation: 'update', status: 'pending', attempts: 0 },
-      { sequence: 3, contactId: original.id, operation: 'archive', status: 'pending', attempts: 0 },
+    expect(
+      events.map(({ sequence, contactId, operation, status, attempts }) => ({
+        sequence,
+        contactId,
+        operation,
+        status,
+        attempts,
+      })),
+    ).toEqual([
+      {
+        sequence: 1,
+        contactId: original.id,
+        operation: 'create',
+        status: 'pending',
+        attempts: 0,
+      },
+      {
+        sequence: 2,
+        contactId: original.id,
+        operation: 'update',
+        status: 'pending',
+        attempts: 0,
+      },
+      {
+        sequence: 3,
+        contactId: original.id,
+        operation: 'archive',
+        status: 'pending',
+        attempts: 0,
+      },
     ])
-    expect(events.every((event) => !('name' in event) && !('phoneNumbers' in event))).toBe(true)
+    expect(
+      events.every((event) => !('name' in event) && !('phoneNumbers' in event)),
+    ).toBe(true)
   })
 
   it('does not enqueue a delete for a missing contact', async () => {
@@ -81,8 +123,89 @@ describe('contact model and IndexedDB repository', () => {
     expect(await repository.listPendingChanges()).toEqual([])
   })
 
+  it('imports remote-only contacts while preserving local records with the same ID', async () => {
+    const local = await repository.create({
+      name: 'Local version',
+      phoneNumbers: ['111'],
+    })
+    const remoteOnly = {
+      id: 'remote-only',
+      name: 'Remote contact',
+      phoneNumbers: ['222'],
+      emails: [],
+      tags: ['Imported'],
+      createdAt: 10,
+      updatedAt: 20,
+    }
+    const remoteConflict = {
+      ...local,
+      name: 'Remote version',
+      phoneNumbers: ['333'],
+      updatedAt: local.updatedAt + 1,
+    }
+    const [createEvent] = await repository.listPendingChanges()
+    await repository.updateChange({ ...createEvent, status: 'completed' })
+
+    const result = await repository.importRemoteContacts([
+      remoteOnly,
+      remoteConflict,
+    ])
+
+    expect(result).toEqual({
+      imported: 1,
+      preservedLocal: 1,
+      skippedPendingArchive: 0,
+    })
+    expect(await repository.getById(remoteOnly.id)).toEqual(remoteOnly)
+    expect(await repository.getById(local.id)).toEqual(local)
+    expect(
+      (await repository.listPendingChanges()).map(
+        ({ operation, contactId }) => ({ operation, contactId }),
+      ),
+    ).toEqual([{ operation: 'update', contactId: local.id }])
+  })
+
+  it('does not reimport a remotely visible contact with a pending local archive', async () => {
+    const contact = await repository.create({
+      name: 'Mira',
+      phoneNumbers: ['00123'],
+    })
+    await repository.delete(contact.id)
+
+    const result = await repository.importRemoteContacts([contact])
+
+    expect(result).toEqual({
+      imported: 0,
+      preservedLocal: 0,
+      skippedPendingArchive: 1,
+    })
+    expect(await repository.getById(contact.id)).toBeUndefined()
+  })
+
+  it('requeues blocked changes only after an explicit retry request', async () => {
+    const contact = await repository.create({
+      name: 'Mira',
+      phoneNumbers: ['00123'],
+    })
+    const [event] = await repository.listPendingChanges()
+    await repository.updateChange({
+      ...event,
+      status: 'blocked',
+      lastError: 'ambiguous',
+    })
+
+    expect(await repository.listPendingChanges()).toEqual([])
+    expect(await repository.retryBlockedChanges()).toBe(1)
+    expect(await repository.listPendingChanges()).toMatchObject([
+      { contactId: contact.id, status: 'pending', lastError: undefined },
+    ])
+  })
+
   it('keeps contacts after closing and reopening the database', async () => {
-    const original = await repository.create({ name: 'Mira', phoneNumbers: ['00123'] })
+    const original = await repository.create({
+      name: 'Mira',
+      phoneNumbers: ['00123'],
+    })
     await repository.close()
 
     expect(await repository.getById(original.id)).toEqual(original)
@@ -90,12 +213,20 @@ describe('contact model and IndexedDB repository', () => {
 
   it('surfaces browser storage failures through a repository error', async () => {
     const originalIndexedDb = globalThis.indexedDB
-    Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: undefined })
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: undefined,
+    })
     try {
-      const brokenRepository = new IndexedDbContactRepository('storage-unavailable')
+      const brokenRepository = new IndexedDbContactRepository(
+        'storage-unavailable',
+      )
       await expect(brokenRepository.list()).rejects.toThrow(ContactStorageError)
     } finally {
-      Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: originalIndexedDb })
+      Object.defineProperty(globalThis, 'indexedDB', {
+        configurable: true,
+        value: originalIndexedDb,
+      })
     }
   })
 })

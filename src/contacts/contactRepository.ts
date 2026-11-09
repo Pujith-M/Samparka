@@ -8,8 +8,13 @@ const DATABASE_VERSION = 2
 const CONTACT_STORE = 'contacts'
 const OUTBOX_STORE = 'outbox'
 const METADATA_STORE = 'metadata'
+const SYNC_LEASE_KEY = 'googleSheetsSyncLease'
+const SYNC_LEASE_DURATION_MS = 30_000
+
+type SyncLease = { owner: string; expiresAt: number }
 
 export type ContactChangeEvent = {
+  schemaVersion: 1
   eventId: string
   sequence: number
   contactId: string
@@ -19,6 +24,12 @@ export type ContactChangeEvent = {
   attempts: number
   nextAttemptAt?: number
   lastError?: 'authorization' | 'transient' | 'ambiguous' | 'permanent'
+}
+
+export type ImportResult = {
+  imported: number
+  preservedLocal: number
+  skippedPendingArchive: number
 }
 
 interface SamparkaDatabase extends DBSchema {
@@ -34,7 +45,7 @@ interface SamparkaDatabase extends DBSchema {
   }
   metadata: {
     key: string
-    value: number
+    value: number | SyncLease
   }
 }
 
@@ -52,7 +63,13 @@ export interface ContactRepository {
   update(id: string, changes: ContactUpdate): Promise<Contact>
   delete(id: string): Promise<void>
   listPendingChanges(): Promise<ContactChangeEvent[]>
+  listChanges(): Promise<ContactChangeEvent[]>
   updateChange(event: ContactChangeEvent): Promise<void>
+  retryBlockedChanges(): Promise<number>
+  importRemoteContacts(contacts: readonly Contact[]): Promise<ImportResult>
+  acquireSyncLease(owner: string): Promise<boolean>
+  renewSyncLease(owner: string): Promise<boolean>
+  releaseSyncLease(owner: string): Promise<void>
 }
 
 export class IndexedDbContactRepository implements ContactRepository {
@@ -61,31 +78,44 @@ export class IndexedDbContactRepository implements ContactRepository {
   constructor(private readonly databaseName = DATABASE_NAME) {}
 
   private open(): Promise<IDBPDatabase<SamparkaDatabase>> {
-    this.database ??= openDB<SamparkaDatabase>(this.databaseName, DATABASE_VERSION, {
-      upgrade(database) {
-        if (!database.objectStoreNames.contains(CONTACT_STORE)) {
-          const store = database.createObjectStore(CONTACT_STORE, { keyPath: 'id' })
-          store.createIndex('by-updated-at', 'updatedAt')
-        }
-        if (!database.objectStoreNames.contains(OUTBOX_STORE)) {
-          const outbox = database.createObjectStore(OUTBOX_STORE, { keyPath: 'eventId' })
-          outbox.createIndex('by-sequence', 'sequence')
-          outbox.createIndex('by-status', 'status')
-        }
-        if (!database.objectStoreNames.contains(METADATA_STORE)) {
-          database.createObjectStore(METADATA_STORE)
-        }
+    this.database ??= openDB<SamparkaDatabase>(
+      this.databaseName,
+      DATABASE_VERSION,
+      {
+        upgrade(database) {
+          if (!database.objectStoreNames.contains(CONTACT_STORE)) {
+            const store = database.createObjectStore(CONTACT_STORE, {
+              keyPath: 'id',
+            })
+            store.createIndex('by-updated-at', 'updatedAt')
+          }
+          if (!database.objectStoreNames.contains(OUTBOX_STORE)) {
+            const outbox = database.createObjectStore(OUTBOX_STORE, {
+              keyPath: 'eventId',
+            })
+            outbox.createIndex('by-sequence', 'sequence')
+            outbox.createIndex('by-status', 'status')
+          }
+          if (!database.objectStoreNames.contains(METADATA_STORE)) {
+            database.createObjectStore(METADATA_STORE)
+          }
+        },
       },
-    })
+    )
     return this.database
   }
 
-  private async run<T>(operation: (database: IDBPDatabase<SamparkaDatabase>) => Promise<T>): Promise<T> {
+  private async run<T>(
+    operation: (database: IDBPDatabase<SamparkaDatabase>) => Promise<T>,
+  ): Promise<T> {
     try {
       return await operation(await this.open())
     } catch (error) {
       if (error instanceof ContactStorageError) throw error
-      throw new ContactStorageError('Could not access contacts in browser storage.', { cause: error })
+      throw new ContactStorageError(
+        'Could not access contacts in browser storage.',
+        { cause: error },
+      )
     }
   }
 
@@ -99,11 +129,20 @@ export class IndexedDbContactRepository implements ContactRepository {
       updatedAt: now,
     }
     return this.run(async (database) => {
-      const transaction = database.transaction([CONTACT_STORE, OUTBOX_STORE, METADATA_STORE], 'readwrite')
-      const sequence = (await transaction.objectStore(METADATA_STORE).get('lastSequence') ?? 0) + 1
+      const transaction = database.transaction(
+        [CONTACT_STORE, OUTBOX_STORE, METADATA_STORE],
+        'readwrite',
+      )
+      const lastSequence = await transaction
+        .objectStore(METADATA_STORE)
+        .get('lastSequence')
+      const sequence =
+        (typeof lastSequence === 'number' ? lastSequence : 0) + 1
       const event = this.createEvent(sequence, contact.id, 'create')
       await transaction.objectStore(CONTACT_STORE).add(contact)
-      await transaction.objectStore(METADATA_STORE).put(sequence, 'lastSequence')
+      await transaction
+        .objectStore(METADATA_STORE)
+        .put(sequence, 'lastSequence')
       await transaction.objectStore(OUTBOX_STORE).add(event)
       await transaction.done
       return contact
@@ -115,20 +154,31 @@ export class IndexedDbContactRepository implements ContactRepository {
   }
 
   list(): Promise<Contact[]> {
-    return this.run(async (database) => (await database.getAllFromIndex(CONTACT_STORE, 'by-updated-at')).reverse())
+    return this.run(async (database) =>
+      (
+        await database.getAllFromIndex(CONTACT_STORE, 'by-updated-at')
+      ).reverse(),
+    )
   }
 
   async update(id: string, changes: ContactUpdate): Promise<Contact> {
     return this.run(async (database) => {
-      const transaction = database.transaction([CONTACT_STORE, OUTBOX_STORE, METADATA_STORE], 'readwrite')
+      const transaction = database.transaction(
+        [CONTACT_STORE, OUTBOX_STORE, METADATA_STORE],
+        'readwrite',
+      )
       const contacts = transaction.objectStore(CONTACT_STORE)
       const existing = await contacts.get(id)
-      if (!existing) throw new ContactStorageError(`Contact “${id}” does not exist.`)
+      if (!existing)
+        throw new ContactStorageError(`Contact “${id}” does not exist.`)
       const normalized = normalizeContact({
         name: changes.name ?? existing.name,
         phoneNumbers: changes.phoneNumbers ?? existing.phoneNumbers,
         emails: changes.emails ?? existing.emails,
-        description: changes.description === undefined ? existing.description : changes.description,
+        description:
+          changes.description === undefined
+            ? existing.description
+            : changes.description,
         tags: changes.tags ?? existing.tags,
       })
       const updated: Contact = {
@@ -137,10 +187,16 @@ export class IndexedDbContactRepository implements ContactRepository {
         createdAt: existing.createdAt,
         updatedAt: Math.max(Date.now(), existing.updatedAt + 1),
       }
-      const sequence = (await transaction.objectStore(METADATA_STORE).get('lastSequence') ?? 0) + 1
+      const lastSequence = await transaction
+        .objectStore(METADATA_STORE)
+        .get('lastSequence')
+      const sequence =
+        (typeof lastSequence === 'number' ? lastSequence : 0) + 1
       const event = this.createEvent(sequence, id, 'update')
       await contacts.put(updated)
-      await transaction.objectStore(METADATA_STORE).put(sequence, 'lastSequence')
+      await transaction
+        .objectStore(METADATA_STORE)
+        .put(sequence, 'lastSequence')
       await transaction.objectStore(OUTBOX_STORE).add(event)
       await transaction.done
       return updated
@@ -149,32 +205,195 @@ export class IndexedDbContactRepository implements ContactRepository {
 
   async delete(id: string): Promise<void> {
     await this.run(async (database) => {
-      const transaction = database.transaction([CONTACT_STORE, OUTBOX_STORE, METADATA_STORE], 'readwrite')
+      const transaction = database.transaction(
+        [CONTACT_STORE, OUTBOX_STORE, METADATA_STORE],
+        'readwrite',
+      )
       const contacts = transaction.objectStore(CONTACT_STORE)
       const existing = await contacts.get(id)
       if (!existing) {
         await transaction.done
         return
       }
-      const sequence = (await transaction.objectStore(METADATA_STORE).get('lastSequence') ?? 0) + 1
+      const lastSequence = await transaction
+        .objectStore(METADATA_STORE)
+        .get('lastSequence')
+      const sequence =
+        (typeof lastSequence === 'number' ? lastSequence : 0) + 1
       const event = this.createEvent(sequence, id, 'archive')
       await contacts.delete(id)
-      await transaction.objectStore(METADATA_STORE).put(sequence, 'lastSequence')
+      await transaction
+        .objectStore(METADATA_STORE)
+        .put(sequence, 'lastSequence')
       await transaction.objectStore(OUTBOX_STORE).add(event)
       await transaction.done
     })
   }
 
   listPendingChanges(): Promise<ContactChangeEvent[]> {
-    return this.run(async (database) => (await database.getAllFromIndex(OUTBOX_STORE, 'by-status', 'pending')).sort((a, b) => a.sequence - b.sequence))
+    return this.run(async (database) =>
+      (
+        await database.getAllFromIndex(OUTBOX_STORE, 'by-status', 'pending')
+      ).sort((a, b) => a.sequence - b.sequence),
+    )
+  }
+
+  listChanges(): Promise<ContactChangeEvent[]> {
+    return this.run(async (database) =>
+      (await database.getAllFromIndex(OUTBOX_STORE, 'by-sequence')).reverse(),
+    )
   }
 
   async updateChange(event: ContactChangeEvent): Promise<void> {
     await this.run((database) => database.put(OUTBOX_STORE, event))
   }
 
-  private createEvent(sequence: number, contactId: string, operation: ContactChangeEvent['operation']): ContactChangeEvent {
-    return { eventId: crypto.randomUUID(), sequence, contactId, operation, createdAt: Date.now(), status: 'pending', attempts: 0 }
+  async retryBlockedChanges(): Promise<number> {
+    return this.run(async (database) => {
+      const transaction = database.transaction(OUTBOX_STORE, 'readwrite')
+      const store = transaction.objectStore(OUTBOX_STORE)
+      const blocked = await store.index('by-status').getAll('blocked')
+      for (const event of blocked) {
+        await store.put({
+          ...event,
+          status: 'pending',
+          lastError: undefined,
+          nextAttemptAt: undefined,
+        })
+      }
+      await transaction.done
+      return blocked.length
+    })
+  }
+
+  async acquireSyncLease(owner: string): Promise<boolean> {
+    return this.run(async (database) => {
+      const transaction = database.transaction(METADATA_STORE, 'readwrite')
+      const store = transaction.objectStore(METADATA_STORE)
+      const lease = await store.get(SYNC_LEASE_KEY)
+      const now = Date.now()
+      if (lease && typeof lease !== 'number' && lease.expiresAt > now) {
+        await transaction.done
+        return false
+      }
+      await store.put(
+        { owner, expiresAt: now + SYNC_LEASE_DURATION_MS },
+        SYNC_LEASE_KEY,
+      )
+      await transaction.done
+      return true
+    })
+  }
+
+  async renewSyncLease(owner: string): Promise<boolean> {
+    return this.run(async (database) => {
+      const transaction = database.transaction(METADATA_STORE, 'readwrite')
+      const store = transaction.objectStore(METADATA_STORE)
+      const lease = await store.get(SYNC_LEASE_KEY)
+      const now = Date.now()
+      if (
+        !lease ||
+        typeof lease === 'number' ||
+        lease.owner !== owner ||
+        lease.expiresAt <= now
+      ) {
+        await transaction.done
+        return false
+      }
+      await store.put(
+        { owner, expiresAt: now + SYNC_LEASE_DURATION_MS },
+        SYNC_LEASE_KEY,
+      )
+      await transaction.done
+      return true
+    })
+  }
+
+  async releaseSyncLease(owner: string): Promise<void> {
+    await this.run(async (database) => {
+      const transaction = database.transaction(METADATA_STORE, 'readwrite')
+      const store = transaction.objectStore(METADATA_STORE)
+      const lease = await store.get(SYNC_LEASE_KEY)
+      if (lease && typeof lease !== 'number' && lease.owner === owner) {
+        await store.delete(SYNC_LEASE_KEY)
+      }
+      await transaction.done
+    })
+  }
+
+  async importRemoteContacts(
+    remoteContacts: readonly Contact[],
+  ): Promise<ImportResult> {
+    return this.run(async (database) => {
+      const transaction = database.transaction(
+        [CONTACT_STORE, OUTBOX_STORE, METADATA_STORE],
+        'readwrite',
+      )
+      const contactsStore = transaction.objectStore(CONTACT_STORE)
+      const outboxStore = transaction.objectStore(OUTBOX_STORE)
+      const metadataStore = transaction.objectStore(METADATA_STORE)
+      const storedSequence = await metadataStore.get('lastSequence')
+      let sequence = typeof storedSequence === 'number' ? storedSequence : 0
+      const pendingEvents = (await outboxStore.getAll()).filter(
+        (event) => event.status === 'pending',
+      )
+      const pendingContactIds = new Set(
+        pendingEvents.map((event) => event.contactId),
+      )
+      const pendingArchiveIds = new Set(
+        pendingEvents
+          .filter((event) => event.operation === 'archive')
+          .map((event) => event.contactId),
+      )
+      let imported = 0
+      let preservedLocal = 0
+      let skippedPendingArchive = 0
+
+      for (const remote of remoteContacts) {
+        const local = await contactsStore.get(remote.id)
+        if (!local) {
+          if (pendingArchiveIds.has(remote.id)) {
+            skippedPendingArchive += 1
+            continue
+          }
+          await contactsStore.add(remote)
+          imported += 1
+          continue
+        }
+
+        preservedLocal += 1
+        if (!sameContactContent(local, remote)) {
+          if (!pendingContactIds.has(local.id)) {
+            sequence += 1
+            await outboxStore.add(
+              this.createEvent(sequence, local.id, 'update'),
+            )
+            pendingContactIds.add(local.id)
+          }
+        }
+      }
+
+      if (sequence) await metadataStore.put(sequence, 'lastSequence')
+      await transaction.done
+      return { imported, preservedLocal, skippedPendingArchive }
+    })
+  }
+
+  private createEvent(
+    sequence: number,
+    contactId: string,
+    operation: ContactChangeEvent['operation'],
+  ): ContactChangeEvent {
+    return {
+      schemaVersion: 1,
+      eventId: crypto.randomUUID(),
+      sequence,
+      contactId,
+      operation,
+      createdAt: Date.now(),
+      status: 'pending',
+      attempts: 0,
+    }
   }
 
   async close(): Promise<void> {
@@ -183,6 +402,26 @@ export class IndexedDbContactRepository implements ContactRepository {
     database.close()
     this.database = undefined
   }
+}
+
+function sameContactContent(left: Contact, right: Contact): boolean {
+  return (
+    left.name === right.name &&
+    left.description === right.description &&
+    sameValues(left.phoneNumbers, right.phoneNumbers) &&
+    sameValues(left.emails, right.emails) &&
+    sameValues(left.tags, right.tags)
+  )
+}
+
+function sameValues(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  )
 }
 
 export const contactRepository = new IndexedDbContactRepository()

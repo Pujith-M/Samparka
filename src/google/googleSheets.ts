@@ -1,5 +1,5 @@
 import type { Contact } from '../contacts/contact'
-import { CONTACT_HEADERS } from './googleSheetsSchema'
+import { CONTACT_HEADERS, contactToRow } from './googleSheetsSchema'
 
 export const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
 export const SAMPARKA_WORKSHEET = 'Contacts'
@@ -57,6 +57,13 @@ export type SheetPreview = {
   title: string
   worksheets: Array<{ title: string; sheetId: number }>
   values: string[][]
+}
+
+export function worksheetRange(worksheet: string, cells: string): string {
+  const name = /^[A-Za-z0-9_]+$/.test(worksheet)
+    ? worksheet
+    : `'${worksheet.replace(/'/g, "''")}'`
+  return `${name}!${cells}`
 }
 
 export class GoogleIntegrationError extends Error {
@@ -253,7 +260,7 @@ export class SheetsApi {
     const title = meta.sheets[0]?.properties.title
     const values = title
       ? await this.request<{ values?: string[][] }>(
-          `${root}/values/${encodeURIComponent(`${title}!A1:H6`)}`,
+          `${root}/values/${encodeURIComponent(worksheetRange(title, 'A1:H6'))}`,
           token,
         )
       : {}
@@ -285,13 +292,17 @@ export class SheetsApi {
     await this.updateValues(
       result.spreadsheetId,
       `${SAMPARKA_WORKSHEET}!A1`,
-      [ [...CONTACT_HEADERS] ],
+      [[...CONTACT_HEADERS]],
       token,
     )
     return { id: result.spreadsheetId, name: result.properties.title }
   }
 
-  async readValues(spreadsheetId: string, range: string, token: string): Promise<string[][]> {
+  async readValues(
+    spreadsheetId: string,
+    range: string,
+    token: string,
+  ): Promise<string[][]> {
     const result = await this.request<{ values?: string[][] }>(
       `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}`,
       token,
@@ -304,19 +315,27 @@ export class SheetsApi {
     worksheet: string,
     contact: Contact,
     token: string,
-    headers = ['id', 'name', 'phoneNumbers', 'emails', 'description', 'tags', 'createdAt', 'updatedAt', 'archivedAt', 'schemaVersion'],
+    headers = [
+      'id',
+      'name',
+      'phoneNumbers',
+      'emails',
+      'description',
+      'tags',
+      'createdAt',
+      'updatedAt',
+      'archivedAt',
+      'schemaVersion',
+    ],
   ): Promise<void> {
-    const range = `${worksheet}!A:ZZ`
-    const { contactToRow } = await import('./googleSheetsSchema')
+    const range = worksheetRange(worksheet, 'A:ZZ')
     await this.request(
       `${`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}:append`}?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
       token,
       {
         method: 'POST',
         body: JSON.stringify({
-          values: [
-            contactToRow(contact, headers),
-          ],
+          values: [contactToRow(contact, headers)],
         }),
       },
     )
@@ -335,7 +354,12 @@ export class SheetsApi {
     )
   }
 
-  async updateRow(spreadsheetId: string, range: string, values: string[][], token: string): Promise<void> {
+  async updateRow(
+    spreadsheetId: string,
+    range: string,
+    values: string[][],
+    token: string,
+  ): Promise<void> {
     return this.updateValues(spreadsheetId, range, values, token)
   }
 

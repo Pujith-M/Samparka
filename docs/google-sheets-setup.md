@@ -1,6 +1,6 @@
-# Google Sheets feasibility spike setup
+# Google Sheets setup and manual verification
 
-This spike is optional and does not affect local contact storage. Use a dedicated Google test account and a disposable spreadsheet. The demo's **Append sample row** action writes a synthetic test contact to the selected first worksheet.
+Google Sheets is optional and does not affect local contact storage. Use a dedicated Google test account and a disposable spreadsheet. The connector uses an insert-only initial import: remote-only IDs are added locally, existing local contacts are preserved, and local content wins for matching IDs. Local mutations are durably queued and can be backed up to the selected worksheet. Do not test against personal contact data.
 
 ## Google Cloud setup
 
@@ -22,13 +22,16 @@ Never put a client secret, service-account credential, private key, refresh toke
 
 ## Manual account check
 
-1. Start the app with the configuration above and open **Google Sheets**.
-2. Choose **Connect and choose spreadsheet**. Confirm Google shows the app identity and a file-specific access request; reject once and confirm the denial is recoverable by retrying.
-3. Try **Create and select new spreadsheet** once and confirm the created file is selected and its first worksheet preview opens. Disconnect, then choose an existing disposable spreadsheet. Open Picker and cancel once; confirm local contacts remain available.
-4. Confirm the selected title, worksheet list, and first six rows load. Try a spreadsheet the test user cannot access and confirm the API error is visible without losing local data.
-5. Append the synthetic row only to the disposable test file, then verify its stable ID and JSON array cells. Test an explicit update against a known range with a test value using the Sheets API Explorer or a test harness. The spike adapter exposes narrow `updateRow` for this; production UI intentionally does not offer arbitrary range editing.
-6. Confirm metadata writes are refused without the explicit-consent flag. Only after user consent should a test harness call `addMetadataColumns(..., true)`.
-7. To exercise expiry, revoke the app in Google Account third-party connections or wait for token expiry, then retry. A 401 must show reconnect guidance; GIS requires a fresh user gesture and never silently refreshes this browser token.
-8. Inspect browser storage and logs: the access token must not be persisted or logged, and no real contact data should be used for testing.
+1. Start the app with the configuration above and open **Google Sheets**. Confirm no Google call happens before you choose an action.
+2. Choose an existing disposable Samparka sheet. Confirm Google shows the app identity and file access request. Reject once and verify local contacts remain usable and authorization can be retried.
+3. Import a sheet containing one remote-only contact and one ID already present locally with different values. Confirm the remote-only row is imported, the local record is unchanged, and its local version remains queued for backup.
+4. Create and edit a local test contact. Choose **Back up pending changes** and verify the matching stable-ID row is created or updated without duplicating it. Add an unrelated column to the sheet and verify the connector preserves it.
+5. Simulate an uncertain append by allowing the write to reach Google but dropping the response in a test harness. Retry and confirm the consumer reads by stable ID and updates the existing row rather than appending a duplicate.
+6. Delete a local test contact and verify the matching sheet row is archived rather than physically deleted. Try a sheet without archive metadata and verify the operation blocks without changing the schema.
+7. Go offline, edit a contact, reload the app, then reconnect and return to the app while the token remains valid. Verify the event remains pending offline and retries after reconnect/resume. Confirm a second open tab does not run the consumer concurrently.
+8. Revoke the app in Google Account third-party connections or wait for token expiry. Verify local data and pending events remain, and the UI asks for reconnection. Disconnect and confirm the selected-sheet setting and token are cleared while the outbox remains.
+9. Inspect browser storage and logs: the access token must not be persisted or logged, and contact contents must not appear in diagnostics.
+
+The sample-row action is retained for adapter feasibility checks and should only be used with the disposable test spreadsheet.
 
 Automated adapter tests mock Google responses. They cannot replace this real-account smoke check, and no live Google Cloud credentials are committed to the repository.

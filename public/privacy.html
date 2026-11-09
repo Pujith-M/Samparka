@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f6f7f2" />
+    <title>Samparka Privacy</title>
+    <style>
+      :root { color-scheme: light; font-family: system-ui, sans-serif; color: #24251f; background: #f6f7f2; }
+      body { max-width: 48rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; line-height: 1.65; }
+      h1, h2 { line-height: 1.2; }
+      a { color: #345f50; }
+      .updated { color: #5f625a; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p><a href="./">Back to Samparka</a></p>
+      <h1>Samparka Privacy Policy</h1>
+      <p class="updated">Last updated: November 9, 2026</p>
+      <p>Samparka is a local-first contact app. This policy describes the current browser app while it is in development.</p>
+
+      <h2>Information stored on your device</h2>
+      <p>Contact names, phone numbers, email addresses, descriptions, tags, and created/updated timestamps are stored in IndexedDB in your browser. Contact changes are accompanied by a durable local outbox event containing a contact ID, operation, sequence, timestamp, and delivery status; the event does not copy contact fields.</p>
+      <p>The selected Google spreadsheet ID, title, and worksheet name are saved in this browser's local storage so you can reconnect to the same destination. Clearing browser data can remove local contacts, queued changes, and this selection. Samparka does not currently provide export or restore from a local file.</p>
+
+      <h2>Google Sheets</h2>
+      <p>Google Sheets is optional. If you authorize Google and select a spreadsheet, Samparka can read its contact rows when you import and write local contact changes to that selected spreadsheet when backup runs. Import adds remote-only contact IDs and preserves existing local contacts. The selected spreadsheet follows your Google account's sharing settings.</p>
+      <p>The Google access token is held in memory by the browser app and is not saved in IndexedDB or local storage. It is discarded when the app page is closed or reloaded, when you disconnect, or when it expires. Google may process the authorization and API requests under its own privacy terms.</p>
+
+      <h2>Disconnecting and revoking access</h2>
+      <p>Disconnecting clears the selected spreadsheet setting and the in-memory token from this app. It does not delete local contacts or queued changes, and it does not change or delete anything in your spreadsheet. To revoke Samparka's Google access, remove it from your Google Account's third-party connections. Pending changes remain on this device until you reconnect and back them up, or browser storage is cleared.</p>
+
+      <h2>Sharing and diagnostics</h2>
+      <p>Samparka does not operate a server that stores your contacts. The app does not include an analytics service. Google receives contact data only when you choose to import from or back up to the spreadsheet you selected. The connector's browser diagnostics are intended to record operation status without logging contact field values or access tokens.</p>
+
+      <h2>Security and retention</h2>
+      <p>Contact data is subject to the security of your browser profile and device; this version does not encrypt contact fields separately. Browser storage can be cleared or evicted. Keep your device and browser account secure, and do not use a spreadsheet shared with people who should not see its contents.</p>
+
+      <h2>Changes and contact</h2>
+      <p>This policy may change as Samparka develops. For privacy questions about this project, contact the repository owner through the <a href="https://github.com/Pujith-M/Samparka">Samparka GitHub repository</a>.</p>
+    </main>
+  </body>
+</html>

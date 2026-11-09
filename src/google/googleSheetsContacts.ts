@@ -1,5 +1,9 @@
 import type { Contact } from '../contacts/contact'
-import { GoogleIntegrationError, SheetsApi } from './googleSheets'
+import {
+  GoogleIntegrationError,
+  SheetsApi,
+  worksheetRange,
+} from './googleSheets'
 import {
   contactToRow,
   findContactRow,
@@ -20,7 +24,7 @@ export class GoogleSheetsContactAdapter {
   ): Promise<{ validation: SheetValidation; values: string[][] }> {
     const values = await this.api.readValues(
       location.spreadsheetId,
-      `${location.worksheet}!A:ZZ`,
+      worksheetRange(location.worksheet, 'A:ZZ'),
       token,
     )
     const validation = validateSheetRows(values, {
@@ -47,7 +51,7 @@ export class GoogleSheetsContactAdapter {
   ): Promise<void> {
     const values = await this.api.readValues(
       location.spreadsheetId,
-      `${location.worksheet}!A:ZZ`,
+      worksheetRange(location.worksheet, 'A:ZZ'),
       token,
     )
     const validation = validateSheetRows(values).headers
@@ -87,7 +91,7 @@ export class GoogleSheetsContactAdapter {
     const existing = validation.rows[rowNumber - 2]
     await this.api.updateValues(
       location.spreadsheetId,
-      `${location.worksheet}!A${rowNumber}`,
+      worksheetRange(location.worksheet, `A${rowNumber}`),
       [contactToRow(contact, validation.headers, existing)],
       token,
     )
@@ -108,7 +112,7 @@ export class GoogleSheetsContactAdapter {
     const existing = validation.rows[rowNumber - 2]
     await this.api.updateValues(
       location.spreadsheetId,
-      `${location.worksheet}!A${rowNumber}`,
+      worksheetRange(location.worksheet, `A${rowNumber}`),
       [contactToRow(contact, validation.headers, existing)],
       token,
     )
@@ -152,7 +156,10 @@ export class GoogleSheetsContactAdapter {
     const column = validation.archiveColumn as number
     await this.api.updateValues(
       location.spreadsheetId,
-      `${location.worksheet}!${columnToLetter(column + 1)}${rowNumber}`,
+      worksheetRange(
+        location.worksheet,
+        `${columnToLetter(column + 1)}${rowNumber}`,
+      ),
       [[archivedAt === null ? '' : String(archivedAt)]],
       token,
     )

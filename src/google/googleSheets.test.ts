@@ -1,8 +1,22 @@
 import { describe, expect, it, vi } from 'vitest'
-import { GoogleIntegrationError, SheetsApi } from './googleSheets'
+import {
+  GoogleIntegrationError,
+  SheetsApi,
+  worksheetRange,
+} from './googleSheets'
 import { CONTACT_HEADERS } from './googleSheetsSchema'
 
 describe('SheetsApi', () => {
+  it('quotes worksheet names safely in A1 ranges', () => {
+    expect(worksheetRange('Contacts', 'A1:H6')).toBe('Contacts!A1:H6')
+    expect(worksheetRange('Family Contacts', 'A1:H6')).toBe(
+      "'Family Contacts'!A1:H6",
+    )
+    expect(worksheetRange("People's Book", 'A1:H6')).toBe(
+      "'People''s Book'!A1:H6",
+    )
+  })
+
   it('reads spreadsheet metadata and a worksheet preview with the user token', async () => {
     const fetcher = vi
       .fn()
