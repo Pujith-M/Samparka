@@ -375,9 +375,9 @@ export function GoogleSheetsSpike({
       <p className="eyebrow">Feasibility spike</p>
       <h1 id="google-title">Google Sheets</h1>
       <p className="spike-copy">
-        Choose an existing worksheet that uses the Samparka contact schema or
-        create a new Samparka worksheet. If reversible archive support needs a
-        metadata column, Samparka will ask before changing the worksheet.
+        Choose an existing worksheet that already uses the Samparka contact
+        schema or create a new Samparka worksheet. Existing worksheets are not
+        changed automatically; missing required columns are reported for review.
       </p>
       {message && (
         <p className="alert" role="status">
