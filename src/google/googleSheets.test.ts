@@ -40,6 +40,7 @@ describe('SheetsApi', () => {
     )
     expect(result).toEqual({
       title: 'People',
+      worksheet: 'Contacts',
       worksheets: [{ title: 'Contacts', sheetId: 1 }],
       values: [
         ['ID', 'Name'],

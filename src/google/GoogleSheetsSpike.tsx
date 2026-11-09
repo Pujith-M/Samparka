@@ -47,6 +47,7 @@ export function GoogleSheetsSpike({
     },
   )
   const [preview, setPreview] = useState<SheetPreview>()
+  const [worksheetChoice, setWorksheetChoice] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [queue, setQueue] = useState<QueueSummary>({ pending: 0, blocked: 0 })
@@ -184,7 +185,9 @@ export function GoogleSheetsSpike({
       trace('picker.spreadsheetSelected')
       trace('preview.requested')
       const sheetPreview = await sheets.preview(selected.id, auth.accessToken)
-      saveSpreadsheet(selected, sheetPreview.worksheets[0]?.title ?? 'Sheet1')
+      const worksheet = sheetPreview.worksheet ?? 'Sheet1'
+      saveSpreadsheet(selected, worksheet)
+      setWorksheetChoice(worksheet)
       setPreview(sheetPreview)
       setConnected(true)
       trace('preview.completed')
@@ -211,7 +214,9 @@ export function GoogleSheetsSpike({
       trace('sheets.create.responseReceived')
       trace('preview.requested')
       const sheetPreview = await sheets.preview(selected.id, accessToken)
-      saveSpreadsheet(selected, sheetPreview.worksheets[0]?.title ?? 'Sheet1')
+      const worksheet = sheetPreview.worksheet ?? 'Sheet1'
+      saveSpreadsheet(selected, worksheet)
+      setWorksheetChoice(worksheet)
       setPreview(sheetPreview)
       setConnected(true)
       trace('preview.completed')
@@ -244,16 +249,46 @@ export function GoogleSheetsSpike({
     if (!destination) {
       const picked = await pickSpreadsheet(config, activeToken.value)
       const sheetPreview = await sheets.preview(picked.id, activeToken.value)
+      const worksheet = sheetPreview.worksheet ?? 'Sheet1'
       destination = {
         ...picked,
-        worksheet: sheetPreview.worksheets[0]?.title ?? 'Sheet1',
+        worksheet,
       }
-      saveSpreadsheet(picked, destination.worksheet)
+      saveSpreadsheet(picked, worksheet)
       setPreview(sheetPreview)
+      setWorksheetChoice(worksheet)
     }
     setConnected(true)
     return { activeToken, destination }
   }
+
+  const loadWorksheetOptions = () =>
+    void run('loadWorksheetOptions', async () => {
+      const { activeToken, destination } = await getAuthorizedDestination()
+      const sheetPreview = await sheets.preview(
+        destination.id,
+        activeToken.value,
+        destination.worksheet,
+      )
+      setPreview(sheetPreview)
+      setWorksheetChoice(sheetPreview.worksheet ?? destination.worksheet)
+    })
+
+  const selectWorksheet = () =>
+    void run('selectWorksheet', async () => {
+      if (!worksheetChoice) return
+      const { activeToken, destination } = await getAuthorizedDestination()
+      const sheetPreview = await sheets.preview(
+        destination.id,
+        activeToken.value,
+        worksheetChoice,
+      )
+      const worksheet = sheetPreview.worksheet ?? destination.worksheet
+      saveSpreadsheet(destination, worksheet)
+      setWorksheetChoice(worksheet)
+      setPreview(sheetPreview)
+      setMessage(`Using worksheet ${worksheet}.`)
+    })
 
   const importFromDestination = async (
     location: SheetLocation,
@@ -426,6 +461,7 @@ export function GoogleSheetsSpike({
             onClick={() => {
               setSpreadsheet(undefined)
               setPreview(undefined)
+              setWorksheetChoice('')
               setToken(undefined)
               setConnected(false)
               localStorage.removeItem(savedSheetKey)
@@ -467,11 +503,48 @@ export function GoogleSheetsSpike({
             Disconnecting clears this browser’s selected-sheet setting and
             access token. It keeps local contacts and queued changes.
           </p>
+          {preview ? (
+            <div className="google-choice-actions">
+              <label className="select-field" htmlFor="worksheet-select">
+                Worksheet
+                <select
+                  id="worksheet-select"
+                  value={worksheetChoice}
+                  onChange={(event) => setWorksheetChoice(event.target.value)}
+                  disabled={busy || preview.worksheets.length === 0}
+                >
+                  {preview.worksheets.map((worksheet) => (
+                    <option key={worksheet.sheetId} value={worksheet.title}>
+                      {worksheet.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="button button-secondary"
+                onClick={selectWorksheet}
+                disabled={
+                  busy ||
+                  !worksheetChoice ||
+                  worksheetChoice === spreadsheet.worksheet
+                }
+              >
+                Use selected worksheet
+              </button>
+            </div>
+          ) : (
+            <button
+              className="button button-secondary"
+              onClick={loadWorksheetOptions}
+              disabled={busy}
+            >
+              Choose worksheet
+            </button>
+          )}
           {preview && (
             <>
               <h2 className="preview-title">
-                {preview.title} ·{' '}
-                {preview.worksheets[0]?.title ?? 'No worksheets'}
+                {preview.title} · {preview.worksheet ?? 'No worksheets'}
               </h2>
               <div
                 className="sheet-preview"
@@ -493,7 +566,7 @@ export function GoogleSheetsSpike({
                     trace('sheets.append.requested')
                     await sheets.appendRow(
                       spreadsheet.id,
-                      preview.worksheets[0]?.title ?? 'Sheet1',
+                      preview.worksheet ?? spreadsheet.worksheet,
                       {
                         id: crypto.randomUUID(),
                         name: 'Samparka feasibility sample',
