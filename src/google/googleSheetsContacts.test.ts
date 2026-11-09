@@ -13,71 +13,46 @@ const contact = {
   updatedAt: 20,
 }
 const location = { spreadsheetId: 'sheet/id', worksheet: 'Contacts' }
-const headersWithoutArchive = CONTACT_HEADERS.filter(
-  (header) => header !== 'archivedAt',
-)
 
 describe('Google Sheets contact adapter', () => {
-  it('asks for explicit consent before changing an existing worksheet', async () => {
-    const fetcher = vi.fn().mockResolvedValueOnce(
-      Response.json({
-        values: [
-          headersWithoutArchive,
-          contactToRow(contact, headersWithoutArchive),
-        ],
-      }),
-    )
-    const adapter = new GoogleSheetsContactAdapter(new SheetsApi(fetcher))
-
-    await expect(
-      adapter.addArchiveMetadataColumn(location, 'token', false),
-    ).rejects.toMatchObject({ code: 'consent' })
-    expect(fetcher).toHaveBeenCalledTimes(1)
-  })
-
-  it('adds the missing archive column before schemaVersion after consent', async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce(
+  it.each(['id', 'archivedAt'])(
+    'does not mutate a worksheet without the required %s header',
+    async (missingHeader) => {
+      const headers = CONTACT_HEADERS.filter(
+        (header) => header !== missingHeader,
+      )
+      const fetcher = vi.fn().mockResolvedValueOnce(
         Response.json({
-          values: [
-            headersWithoutArchive,
-            contactToRow(contact, headersWithoutArchive),
-          ],
+          values: [headers, contactToRow(contact, headers)],
         }),
       )
-      .mockResolvedValueOnce(
-        Response.json({
-          sheets: [{ properties: { title: 'Contacts', sheetId: 12 } }],
-        }),
-      )
-      .mockResolvedValueOnce(Response.json({}))
-    const adapter = new GoogleSheetsContactAdapter(new SheetsApi(fetcher))
+      const adapter = new GoogleSheetsContactAdapter(new SheetsApi(fetcher))
 
-    await expect(
-      adapter.addArchiveMetadataColumn(location, 'token', true),
-    ).resolves.toBe(true)
+      await expect(
+        adapter.archive(location, contact.id, 'token'),
+      ).rejects.toThrow(`Missing required header: “${missingHeader}”.`)
+      expect(fetcher).toHaveBeenCalledTimes(1)
+    },
+  )
 
-    expect(fetcher).toHaveBeenCalledTimes(3)
-    const request = JSON.parse(String(fetcher.mock.calls[2][1]?.body)) as {
-      requests: Array<{ insertDimension?: { range: { startIndex: number } } }>
-    }
-    expect(request.requests[0].insertDimension?.range.startIndex).toBe(
-      headersWithoutArchive.indexOf('schemaVersion'),
-    )
-  })
-
-  it('does not add a duplicate archive column when it already exists', async () => {
+  it('reads and archives rows using the current Samparka schema', async () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(
         Response.json({ values: [CONTACT_HEADERS, contactToRow(contact)] }),
       )
+      .mockResolvedValueOnce(
+        Response.json({ values: [CONTACT_HEADERS, contactToRow(contact)] }),
+      )
+      .mockResolvedValueOnce(Response.json({}))
     const adapter = new GoogleSheetsContactAdapter(new SheetsApi(fetcher))
 
-    await expect(
-      adapter.addArchiveMetadataColumn(location, 'token', true),
-    ).resolves.toBe(false)
-    expect(fetcher).toHaveBeenCalledTimes(1)
+    await expect(adapter.list(location, 'token')).resolves.toEqual([contact])
+    await adapter.archive(location, contact.id, 'token')
+
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(String(fetcher.mock.calls[2][0])).toContain(
+      '/values/Contacts!I2?valueInputOption=RAW',
+    )
   })
 })

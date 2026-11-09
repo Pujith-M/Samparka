@@ -21,7 +21,7 @@ export type SheetValidation = {
   headers: SheetRow
   rows: SheetRow[]
   idColumn: number
-  archiveColumn?: number
+  archiveColumn: number
   schemaVersionColumn: number
 }
 
@@ -63,7 +63,6 @@ function parseList(raw: string, field: string, rowNumber: number): string[] {
 
 export function validateSheetRows(
   values: readonly ReadonlySheetRow[],
-  options: { requireArchiveColumn?: boolean } = {},
 ): SheetValidation {
   if (!values.length)
     throw new SheetSchemaError(
@@ -77,16 +76,11 @@ export function validateSheetRows(
   )
   if (duplicate)
     throw new SheetSchemaError(`Duplicate header name: “${duplicate}”.`)
-  const missing = MANAGED_HEADERS.filter(
-    (header) => header !== 'archivedAt' && !headers.includes(header),
-  )
+  const missing = MANAGED_HEADERS.filter((header) => !headers.includes(header))
   if (missing.length)
     throw new SheetSchemaError(`Missing required header: “${missing[0]}”.`)
   const archiveColumn = indexOf(headers, 'archivedAt')
-  if (options.requireArchiveColumn && archiveColumn < 0)
-    throw new SheetSchemaError(
-      'Archive metadata is missing; ask consent before adding “archivedAt”.',
-    )
+  const idColumn = indexOf(headers, 'id')
   const rows = values
     .slice(1)
     .filter((row) => !isBlank(row))
@@ -96,7 +90,7 @@ export function validateSheetRows(
     if (isBlank(sourceRow)) return
     const row = [...sourceRow]
     const rowNumber = offset + 2
-    const id = value(row, headers, 'id').trim()
+    const id = (row[idColumn] ?? '').trim()
     if (!id)
       throw new SheetSchemaError(
         `Row ${rowNumber} is missing a Samparka contact ID.`,
@@ -109,8 +103,8 @@ export function validateSheetRows(
   return {
     headers,
     rows,
-    idColumn: indexOf(headers, 'id'),
-    archiveColumn: archiveColumn >= 0 ? archiveColumn : undefined,
+    idColumn,
+    archiveColumn,
     schemaVersionColumn: indexOf(headers, 'schemaVersion'),
   }
 }
@@ -187,9 +181,8 @@ export function findContactRow(
   validation: SheetValidation,
   id: string,
 ): number {
-  const index = validation.rows.findIndex(
-    (row) => row[validation.idColumn]?.trim() === id,
-  )
+  const idColumn = validation.idColumn
+  const index = validation.rows.findIndex((row) => row[idColumn]?.trim() === id)
   return index < 0 ? -1 : index + 2
 }
 
@@ -198,10 +191,6 @@ export function archiveCell(
   id: string,
   archivedAt: number | null,
 ) {
-  if (validation.archiveColumn === undefined)
-    throw new SheetSchemaError(
-      'Archive metadata is missing; ask consent before adding “archivedAt”.',
-    )
   const rowNumber = findContactRow(validation, id)
   if (rowNumber < 0)
     throw new SheetSchemaError(`Contact “${id}” was not found.`)

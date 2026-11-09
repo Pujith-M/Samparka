@@ -20,17 +20,13 @@ export class GoogleSheetsContactAdapter {
   private async validated(
     location: SheetLocation,
     token: string,
-    requireArchive = false,
-  ): Promise<{ validation: SheetValidation; values: string[][] }> {
+  ): Promise<SheetValidation> {
     const values = await this.api.readValues(
       location.spreadsheetId,
       worksheetRange(location.worksheet, 'A:ZZ'),
       token,
     )
-    const validation = validateSheetRows(values, {
-      requireArchiveColumn: requireArchive,
-    })
-    return { validation, values }
+    return validateSheetRows(values)
   }
 
   async list(
@@ -38,46 +34,10 @@ export class GoogleSheetsContactAdapter {
     token: string,
     includeArchived = false,
   ): Promise<Contact[]> {
-    const { validation } = await this.validated(location, token)
+    const validation = await this.validated(location, token)
     return validation.rows
       .map((row) => parseContactRow(row, validation.headers))
       .filter((contact) => includeArchived || contact.archivedAt === undefined)
-  }
-
-  async hasArchiveMetadataColumn(
-    location: SheetLocation,
-    token: string,
-  ): Promise<boolean> {
-    const { validation } = await this.validated(location, token)
-    return validation.archiveColumn !== undefined
-  }
-
-  async addArchiveMetadataColumn(
-    location: SheetLocation,
-    token: string,
-    explicitConsent: boolean,
-  ): Promise<boolean> {
-    const { validation } = await this.validated(location, token)
-    if (validation.archiveColumn !== undefined) return false
-    if (!explicitConsent)
-      throw new GoogleIntegrationError(
-        'Explicit consent is required before adding the archive metadata column.',
-        'consent',
-      )
-
-    const sheetId = await this.api.worksheetId(
-      location.spreadsheetId,
-      location.worksheet,
-      token,
-    )
-    await this.api.insertArchiveMetadataColumn(
-      location.spreadsheetId,
-      sheetId,
-      validation.schemaVersionColumn,
-      token,
-      explicitConsent,
-    )
-    return true
   }
 
   async create(
@@ -106,7 +66,7 @@ export class GoogleSheetsContactAdapter {
     token: string,
     allowCreate: boolean,
   ): Promise<void> {
-    const { validation } = await this.validated(location, token)
+    const validation = await this.validated(location, token)
     const rowNumber = findContactRow(validation, contact.id)
     if (rowNumber < 0) {
       if (!allowCreate) {
@@ -138,7 +98,7 @@ export class GoogleSheetsContactAdapter {
     contact: Contact,
     token: string,
   ): Promise<void> {
-    const { validation } = await this.validated(location, token)
+    const validation = await this.validated(location, token)
     const rowNumber = findContactRow(validation, contact.id)
     if (rowNumber < 0)
       throw new GoogleIntegrationError(
@@ -167,7 +127,7 @@ export class GoogleSheetsContactAdapter {
     id: string,
     token: string,
   ): Promise<void> {
-    const { validation } = await this.validated(location, token, true)
+    const validation = await this.validated(location, token)
     if (findContactRow(validation, id) < 0) return
     await this.setArchive(location, id, Date.now(), token)
   }
@@ -185,11 +145,11 @@ export class GoogleSheetsContactAdapter {
     archivedAt: number | null,
     token: string,
   ) {
-    const { validation } = await this.validated(location, token, true)
+    const validation = await this.validated(location, token)
     const rowNumber = findContactRow(validation, id)
     if (rowNumber < 0)
       throw new GoogleIntegrationError(`Contact “${id}” was not found.`, 'api')
-    const column = validation.archiveColumn as number
+    const column = validation.archiveColumn
     await this.api.updateValues(
       location.spreadsheetId,
       worksheetRange(

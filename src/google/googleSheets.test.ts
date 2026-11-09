@@ -111,47 +111,6 @@ describe('SheetsApi', () => {
     })
   })
 
-  it('inserts archive metadata and writes its header in one batch after consent', async () => {
-    const fetcher = vi.fn().mockResolvedValue(Response.json({}))
-    const api = new SheetsApi(fetcher)
-
-    await expect(
-      api.insertArchiveMetadataColumn('sheet/id', 12, 8, 'token', false),
-    ).rejects.toMatchObject({ code: 'consent' })
-    expect(fetcher).not.toHaveBeenCalled()
-
-    await api.insertArchiveMetadataColumn('sheet/id', 12, 8, 'token', true)
-
-    expect(String(fetcher.mock.calls[0][0])).toContain(
-      '/v4/spreadsheets/sheet%2Fid:batchUpdate',
-    )
-    expect(fetcher.mock.calls[0][1]?.method).toBe('POST')
-    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({
-      requests: [
-        {
-          insertDimension: {
-            range: {
-              sheetId: 12,
-              dimension: 'COLUMNS',
-              startIndex: 8,
-              endIndex: 9,
-            },
-            inheritFromBefore: true,
-          },
-        },
-        {
-          updateCells: {
-            rows: [
-              { values: [{ userEnteredValue: { stringValue: 'archivedAt' } }] },
-            ],
-            start: { sheetId: 12, rowIndex: 0, columnIndex: 8 },
-            fields: 'userEnteredValue',
-          },
-        },
-      ],
-    })
-  })
-
   it('calls the browser fetch function with its global receiver', async () => {
     const fetcher = vi.fn(function (this: unknown) {
       expect(this).toBe(globalThis)

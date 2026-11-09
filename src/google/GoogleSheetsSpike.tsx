@@ -7,6 +7,7 @@ import {
 } from './googleSheets'
 import type { SelectedSpreadsheet, SheetPreview } from './googleSheets'
 import { GoogleSheetsContactAdapter } from './googleSheetsContacts'
+import type { SheetLocation } from './googleSheetsContacts'
 import { syncGoogleChanges } from './googleSheetsSync'
 import type { Contact } from '../contacts/contact'
 import type { ContactRepository } from '../contacts/contactRepository'
@@ -49,7 +50,6 @@ export function GoogleSheetsSpike({
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [queue, setQueue] = useState<QueueSummary>({ pending: 0, blocked: 0 })
-  const [archiveConsentNeeded, setArchiveConsentNeeded] = useState(false)
   const [archivedContacts, setArchivedContacts] = useState<Contact[] | null>(
     null,
   )
@@ -139,31 +139,31 @@ export function GoogleSheetsSpike({
         )
         return
       }
-      void syncGoogleChanges(
-        repository,
-        contactAdapter,
-        {
+      void (async () => {
+        const location = {
           spreadsheetId: spreadsheet.id,
           worksheet: spreadsheet.worksheet,
-        },
-        token.value,
-      )
-        .then(async (result) => {
-          await refreshQueue()
-          if (result.busy)
-            setMessage('Another Samparka tab is already backing up changes.')
-          else if (result.blocked)
-            setMessage(`${result.blocked} backup change(s) need review.`)
-          else if (result.paused)
-            setMessage(
-              'Backup is paused until Google access or network connectivity returns.',
-            )
-        })
-        .catch((error: unknown) => {
+        }
+        const result = await syncGoogleChanges(
+          repository,
+          contactAdapter,
+          location,
+          token.value,
+        )
+        await refreshQueue()
+        if (result.busy)
+          setMessage('Another Samparka tab is already backing up changes.')
+        else if (result.blocked)
+          setMessage(`${result.blocked} backup change(s) need review.`)
+        else if (result.paused)
           setMessage(
-            error instanceof Error ? error.message : 'Could not resume backup.',
+            'Backup is paused until Google access or network connectivity returns.',
           )
-        })
+      })().catch((error: unknown) => {
+        setMessage(
+          error instanceof Error ? error.message : 'Could not resume backup.',
+        )
+      })
     }
     resumeSync()
     window.addEventListener('online', resumeSync)
@@ -224,7 +224,6 @@ export function GoogleSheetsSpike({
   ) => {
     const saved = { ...selected, worksheet }
     setSpreadsheet(saved)
-    setArchiveConsentNeeded(false)
     localStorage.setItem(savedSheetKey, JSON.stringify(saved))
   }
 
@@ -256,111 +255,80 @@ export function GoogleSheetsSpike({
     return { activeToken, destination }
   }
 
+  const importFromDestination = async (
+    location: SheetLocation,
+    accessToken: string,
+  ) => {
+    const remoteContacts = await contactAdapter.list(location, accessToken)
+    const result = await repository.importRemoteContacts(remoteContacts)
+    await refreshQueue()
+    setMessage(
+      `Imported ${result.imported} contact(s); preserved ${result.preservedLocal} existing local contact(s); skipped ${result.skippedPendingArchive} pending archive(s).`,
+    )
+  }
+
+  const backupToDestination = async (
+    location: SheetLocation,
+    accessToken: string,
+  ) => {
+    const result = await syncGoogleChanges(
+      repository,
+      contactAdapter,
+      location,
+      accessToken,
+    )
+    await refreshQueue()
+    setMessage(
+      result.busy
+        ? 'Another Samparka tab is already backing up changes. Try again in a moment.'
+        : result.blocked
+          ? `${result.completed} change(s) backed up; ${result.blocked} need review.`
+          : result.paused
+            ? `${result.completed} change(s) backed up. Remaining changes are waiting to retry or reconnect.`
+            : `${result.completed} change(s) backed up; ${result.pending} remain pending.`,
+    )
+  }
+
   const backUpChanges = () =>
     void run('backupChanges', async () => {
       const { activeToken, destination } = await getAuthorizedDestination()
-      const location = {
-        spreadsheetId: destination.id,
-        worksheet: destination.worksheet,
-      }
-      const changes = await repository.listChanges()
-      const unresolvedArchive = changes.some(
-        (event) =>
-          event.operation === 'archive' && event.status !== 'completed',
-      )
-      if (
-        unresolvedArchive &&
-        !(await contactAdapter.hasArchiveMetadataColumn(
-          location,
-          activeToken.value,
-        ))
-      ) {
-        setArchiveConsentNeeded(true)
-        setMessage(
-          'The selected worksheet needs an archive metadata column before Samparka can back up deletes. Review the request below; your queued changes are still stored locally.',
-        )
-        return
-      }
-      setArchiveConsentNeeded(false)
-      const result = await syncGoogleChanges(
-        repository,
-        contactAdapter,
-        location,
-        activeToken.value,
-      )
-      await refreshQueue()
-      setMessage(
-        result.busy
-          ? 'Another Samparka tab is already backing up changes. Try again in a moment.'
-          : result.blocked
-            ? `${result.completed} change(s) backed up; ${result.blocked} need review.`
-            : result.paused
-              ? `${result.completed} change(s) backed up. Remaining changes are waiting to retry or reconnect.`
-              : `${result.completed} change(s) backed up; ${result.pending} remain pending.`,
-      )
-    })
-
-  const addArchiveColumnAndBackUp = () =>
-    void run('addArchiveMetadataColumn', async () => {
-      const { activeToken, destination } = await getAuthorizedDestination()
-      const location = {
-        spreadsheetId: destination.id,
-        worksheet: destination.worksheet,
-      }
-      await contactAdapter.addArchiveMetadataColumn(
-        location,
-        activeToken.value,
-        true,
-      )
-      await repository.retryBlockedChanges('archive')
-      setArchiveConsentNeeded(false)
-
-      const result = await syncGoogleChanges(
-        repository,
-        contactAdapter,
-        location,
-        activeToken.value,
-      )
-      await refreshQueue()
-      setMessage(
-        result.busy
-          ? 'Another Samparka tab is already backing up changes. Try again in a moment.'
-          : result.blocked
-            ? `${result.completed} change(s) backed up; ${result.blocked} need review.`
-            : result.paused
-              ? `${result.completed} change(s) backed up. Remaining changes are waiting to retry or reconnect.`
-              : `${result.completed} change(s) backed up; ${result.pending} remain pending.`,
-      )
-    })
-
-  const importContacts = () =>
-    void run('importContacts', async () => {
-      const { activeToken, destination } = await getAuthorizedDestination()
-      const remoteContacts = await contactAdapter.list(
+      await backupToDestination(
         {
           spreadsheetId: destination.id,
           worksheet: destination.worksheet,
         },
         activeToken.value,
       )
-      const result = await repository.importRemoteContacts(remoteContacts)
-      await refreshQueue()
-      setMessage(
-        `Imported ${result.imported} contact(s); preserved ${result.preservedLocal} existing local contact(s); skipped ${result.skippedPendingArchive} pending archive(s).`,
-      )
     })
+
+  const importContacts = () =>
+    void run('importContacts', async () => {
+      const { activeToken, destination } = await getAuthorizedDestination()
+      const location = {
+        spreadsheetId: destination.id,
+        worksheet: destination.worksheet,
+      }
+      await importFromDestination(location, activeToken.value)
+    })
+
+  const loadArchivedFromDestination = async (
+    location: SheetLocation,
+    accessToken: string,
+  ) => {
+    const contacts = await contactAdapter.list(location, accessToken, true)
+    setArchivedContacts(
+      contacts.filter((contact) => contact.archivedAt !== undefined),
+    )
+  }
 
   const loadArchivedContacts = () =>
     void run('loadArchivedContacts', async () => {
       const { activeToken, destination } = await getAuthorizedDestination()
-      const contacts = await contactAdapter.list(
-        { spreadsheetId: destination.id, worksheet: destination.worksheet },
-        activeToken.value,
-        true,
-      )
-      setArchivedContacts(
-        contacts.filter((contact) => contact.archivedAt !== undefined),
-      )
+      const location = {
+        spreadsheetId: destination.id,
+        worksheet: destination.worksheet,
+      }
+      await loadArchivedFromDestination(location, activeToken.value)
     })
 
   const restoreArchivedContact = (contact: Contact) =>
@@ -460,7 +428,6 @@ export function GoogleSheetsSpike({
               setPreview(undefined)
               setToken(undefined)
               setConnected(false)
-              setArchiveConsentNeeded(false)
               localStorage.removeItem(savedSheetKey)
             }}
           >
@@ -473,36 +440,6 @@ export function GoogleSheetsSpike({
           >
             {busy ? 'Backing up…' : 'Back up pending changes'}
           </button>
-          {archiveConsentNeeded && (
-            <section
-              className="consent-panel"
-              aria-labelledby="archive-consent-title"
-            >
-              <h2 id="archive-consent-title">Add archive metadata?</h2>
-              <p>
-                Samparka needs an <code>archivedAt</code> column to make deletes
-                reversible. This inserts one column before{' '}
-                <code>schemaVersion</code>
-                and shifts existing worksheet columns right, preserving their
-                contents. Your pending changes remain local until backup
-                succeeds.
-              </p>
-              <button
-                className="button button-primary"
-                onClick={addArchiveColumnAndBackUp}
-                disabled={busy}
-              >
-                {busy ? 'Updating worksheet…' : 'Add column and back up'}
-              </button>
-              <button
-                className="text-button"
-                onClick={() => setArchiveConsentNeeded(false)}
-                disabled={busy}
-              >
-                Not now
-              </button>
-            </section>
-          )}
           <button
             className="button button-secondary"
             onClick={importContacts}
