@@ -44,6 +44,42 @@ export class GoogleSheetsContactAdapter {
       .filter((contact) => includeArchived || contact.archivedAt === undefined)
   }
 
+  async hasArchiveMetadataColumn(
+    location: SheetLocation,
+    token: string,
+  ): Promise<boolean> {
+    const { validation } = await this.validated(location, token)
+    return validation.archiveColumn !== undefined
+  }
+
+  async addArchiveMetadataColumn(
+    location: SheetLocation,
+    token: string,
+    explicitConsent: boolean,
+  ): Promise<boolean> {
+    const { validation } = await this.validated(location, token)
+    if (validation.archiveColumn !== undefined) return false
+    if (!explicitConsent)
+      throw new GoogleIntegrationError(
+        'Explicit consent is required before adding the archive metadata column.',
+        'consent',
+      )
+
+    const sheetId = await this.api.worksheetId(
+      location.spreadsheetId,
+      location.worksheet,
+      token,
+    )
+    await this.api.insertArchiveMetadataColumn(
+      location.spreadsheetId,
+      sheetId,
+      validation.schemaVersionColumn,
+      token,
+      explicitConsent,
+    )
+    return true
+  }
+
   async create(
     location: SheetLocation,
     contact: Contact,

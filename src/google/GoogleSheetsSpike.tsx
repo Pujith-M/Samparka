@@ -49,6 +49,7 @@ export function GoogleSheetsSpike({
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [queue, setQueue] = useState<QueueSummary>({ pending: 0, blocked: 0 })
+  const [archiveConsentNeeded, setArchiveConsentNeeded] = useState(false)
   const [archivedContacts, setArchivedContacts] = useState<Contact[] | null>(
     null,
   )
@@ -223,6 +224,7 @@ export function GoogleSheetsSpike({
   ) => {
     const saved = { ...selected, worksheet }
     setSpreadsheet(saved)
+    setArchiveConsentNeeded(false)
     localStorage.setItem(savedSheetKey, JSON.stringify(saved))
   }
 
@@ -257,13 +259,66 @@ export function GoogleSheetsSpike({
   const backUpChanges = () =>
     void run('backupChanges', async () => {
       const { activeToken, destination } = await getAuthorizedDestination()
+      const location = {
+        spreadsheetId: destination.id,
+        worksheet: destination.worksheet,
+      }
+      const changes = await repository.listChanges()
+      const unresolvedArchive = changes.some(
+        (event) =>
+          event.operation === 'archive' && event.status !== 'completed',
+      )
+      if (
+        unresolvedArchive &&
+        !(await contactAdapter.hasArchiveMetadataColumn(
+          location,
+          activeToken.value,
+        ))
+      ) {
+        setArchiveConsentNeeded(true)
+        setMessage(
+          'The selected worksheet needs an archive metadata column before Samparka can back up deletes. Review the request below; your queued changes are still stored locally.',
+        )
+        return
+      }
+      setArchiveConsentNeeded(false)
       const result = await syncGoogleChanges(
         repository,
         contactAdapter,
-        {
-          spreadsheetId: destination.id,
-          worksheet: destination.worksheet,
-        },
+        location,
+        activeToken.value,
+      )
+      await refreshQueue()
+      setMessage(
+        result.busy
+          ? 'Another Samparka tab is already backing up changes. Try again in a moment.'
+          : result.blocked
+            ? `${result.completed} change(s) backed up; ${result.blocked} need review.`
+            : result.paused
+              ? `${result.completed} change(s) backed up. Remaining changes are waiting to retry or reconnect.`
+              : `${result.completed} change(s) backed up; ${result.pending} remain pending.`,
+      )
+    })
+
+  const addArchiveColumnAndBackUp = () =>
+    void run('addArchiveMetadataColumn', async () => {
+      const { activeToken, destination } = await getAuthorizedDestination()
+      const location = {
+        spreadsheetId: destination.id,
+        worksheet: destination.worksheet,
+      }
+      await contactAdapter.addArchiveMetadataColumn(
+        location,
+        activeToken.value,
+        true,
+      )
+      await repository.retryBlockedChanges('archive')
+      setArchiveConsentNeeded(false)
+
+      const result = await syncGoogleChanges(
+        repository,
+        contactAdapter,
+        location,
         activeToken.value,
       )
       await refreshQueue()
@@ -352,9 +407,9 @@ export function GoogleSheetsSpike({
       <p className="eyebrow">Feasibility spike</p>
       <h1 id="google-title">Google Sheets</h1>
       <p className="spike-copy">
-        Choose one of two supported options: connect an existing worksheet that
-        already uses the complete Samparka schema, or create a new Samparka
-        worksheet. Individual columns are never added to an existing sheet.
+        Choose an existing worksheet that uses the Samparka contact schema or
+        create a new Samparka worksheet. If reversible archive support needs a
+        metadata column, Samparka will ask before changing the worksheet.
       </p>
       {message && (
         <p className="alert" role="status">
@@ -405,6 +460,7 @@ export function GoogleSheetsSpike({
               setPreview(undefined)
               setToken(undefined)
               setConnected(false)
+              setArchiveConsentNeeded(false)
               localStorage.removeItem(savedSheetKey)
             }}
           >
@@ -417,6 +473,36 @@ export function GoogleSheetsSpike({
           >
             {busy ? 'Backing up…' : 'Back up pending changes'}
           </button>
+          {archiveConsentNeeded && (
+            <section
+              className="consent-panel"
+              aria-labelledby="archive-consent-title"
+            >
+              <h2 id="archive-consent-title">Add archive metadata?</h2>
+              <p>
+                Samparka needs an <code>archivedAt</code> column to make deletes
+                reversible. This inserts one column before{' '}
+                <code>schemaVersion</code>
+                and shifts existing worksheet columns right, preserving their
+                contents. Your pending changes remain local until backup
+                succeeds.
+              </p>
+              <button
+                className="button button-primary"
+                onClick={addArchiveColumnAndBackUp}
+                disabled={busy}
+              >
+                {busy ? 'Updating worksheet…' : 'Add column and back up'}
+              </button>
+              <button
+                className="text-button"
+                onClick={() => setArchiveConsentNeeded(false)}
+                disabled={busy}
+              >
+                Not now
+              </button>
+            </section>
+          )}
           <button
             className="button button-secondary"
             onClick={importContacts}

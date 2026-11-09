@@ -8,7 +8,7 @@ Schema version: **1.0**. A connection selects one spreadsheet and one worksheet.
 id | name | phoneNumbers | emails | description | tags | createdAt | updatedAt | archivedAt | schemaVersion
 ```
 
-All ten headers are required for a Samparka-managed worksheet. Samparka does not add individual columns to an existing worksheet or ask for consent column by column. A connection must either use a worksheet that already matches this complete schema or create a new Samparka worksheet with the schema below.
+`id`, `name`, `phoneNumbers`, `emails`, `description`, `tags`, `createdAt`, `updatedAt`, and `schemaVersion` are required to read a Samparka worksheet. `archivedAt` is required for reversible archive and restore operations. If an existing compatible worksheet lacks `archivedAt`, Samparka asks before inserting that column immediately before `schemaVersion`; Google Sheets shifts later columns while preserving their contents. Declining leaves the schema and local queue unchanged. New Samparka worksheets start with all ten headers.
 
 Arrays use JSON, not delimiters, so commas, quotes, Unicode, and empty strings remain reversible. For example, `phoneNumbers` is `["+1,555-0100","办公室"]` and `tags` is `["Friend","Work"]`. Timestamps are Unix milliseconds. An archive timestamp hides a contact from the active view; clearing it restores the row. Rows are never deleted.
 

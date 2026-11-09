@@ -76,6 +76,7 @@ export class GoogleIntegrationError extends Error {
       | 'expired'
       | 'api'
       | 'network'
+      | 'consent'
       | 'unavailable',
     readonly status?: number,
   ) {
@@ -363,18 +364,74 @@ export class SheetsApi {
     return this.updateValues(spreadsheetId, range, values, token)
   }
 
-  async addMetadataColumns(
+  async worksheetId(
     spreadsheetId: string,
-    range: string,
-    values: string[][],
+    worksheet: string,
+    token: string,
+  ): Promise<number> {
+    const metadata = await this.request<{
+      sheets: Array<{ properties: { title: string; sheetId: number } }>
+    }>(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=sheets.properties`,
+      token,
+    )
+    const match = metadata.sheets.find(
+      ({ properties }) => properties.title === worksheet,
+    )
+    if (!match)
+      throw new GoogleIntegrationError(
+        'The selected worksheet no longer exists. Choose a worksheet and retry.',
+        'api',
+      )
+    return match.properties.sheetId
+  }
+
+  async insertArchiveMetadataColumn(
+    spreadsheetId: string,
+    sheetId: number,
+    columnIndex: number,
     token: string,
     explicitConsent: boolean,
   ): Promise<void> {
     if (!explicitConsent)
       throw new GoogleIntegrationError(
-        'Explicit consent is required before adding Samparka metadata columns.',
-        'api',
+        'Explicit consent is required before adding the archive metadata column.',
+        'consent',
       )
-    await this.updateRow(spreadsheetId, range, values, token)
+    await this.request(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+      token,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          requests: [
+            {
+              insertDimension: {
+                range: {
+                  sheetId,
+                  dimension: 'COLUMNS',
+                  startIndex: columnIndex,
+                  endIndex: columnIndex + 1,
+                },
+                inheritFromBefore: columnIndex > 0,
+              },
+            },
+            {
+              updateCells: {
+                rows: [
+                  {
+                    values: [
+                      { userEnteredValue: { stringValue: 'archivedAt' } },
+                    ],
+                  },
+                ],
+                start: { sheetId, rowIndex: 0, columnIndex },
+                fields: 'userEnteredValue',
+              },
+            },
+          ],
+        }),
+      },
+    )
   }
 }

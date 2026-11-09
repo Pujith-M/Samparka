@@ -201,6 +201,39 @@ describe('contact model and IndexedDB repository', () => {
     ])
   })
 
+  it('can retry only blocked changes of the explicitly reviewed operation', async () => {
+    const archived = await repository.create({
+      name: 'Archived',
+      phoneNumbers: ['111'],
+    })
+    await repository.delete(archived.id)
+    const edited = await repository.create({
+      name: 'Edited',
+      phoneNumbers: ['222'],
+    })
+    await repository.update(edited.id, { name: 'Edited locally' })
+
+    const events = await repository.listChanges()
+    for (const event of events) {
+      if (event.operation === 'archive' || event.operation === 'update') {
+        await repository.updateChange({
+          ...event,
+          status: 'blocked',
+          lastError: 'ambiguous',
+        })
+      }
+    }
+
+    expect(await repository.retryBlockedChanges('archive')).toBe(1)
+    const afterRetry = await repository.listChanges()
+    expect(
+      afterRetry.find((event) => event.operation === 'update'),
+    ).toMatchObject({ status: 'blocked', lastError: 'ambiguous' })
+    expect(
+      afterRetry.find((event) => event.operation === 'archive'),
+    ).toMatchObject({ status: 'pending', lastError: undefined })
+  })
+
   it('keeps contacts after closing and reopening the database', async () => {
     const original = await repository.create({
       name: 'Mira',

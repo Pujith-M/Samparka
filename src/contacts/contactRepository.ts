@@ -65,7 +65,9 @@ export interface ContactRepository {
   listPendingChanges(): Promise<ContactChangeEvent[]>
   listChanges(): Promise<ContactChangeEvent[]>
   updateChange(event: ContactChangeEvent): Promise<void>
-  retryBlockedChanges(): Promise<number>
+  retryBlockedChanges(
+    operation?: ContactChangeEvent['operation'],
+  ): Promise<number>
   importRemoteContacts(contacts: readonly Contact[]): Promise<ImportResult>
   acquireSyncLease(owner: string): Promise<boolean>
   renewSyncLease(owner: string): Promise<boolean>
@@ -136,8 +138,7 @@ export class IndexedDbContactRepository implements ContactRepository {
       const lastSequence = await transaction
         .objectStore(METADATA_STORE)
         .get('lastSequence')
-      const sequence =
-        (typeof lastSequence === 'number' ? lastSequence : 0) + 1
+      const sequence = (typeof lastSequence === 'number' ? lastSequence : 0) + 1
       const event = this.createEvent(sequence, contact.id, 'create')
       await transaction.objectStore(CONTACT_STORE).add(contact)
       await transaction
@@ -190,8 +191,7 @@ export class IndexedDbContactRepository implements ContactRepository {
       const lastSequence = await transaction
         .objectStore(METADATA_STORE)
         .get('lastSequence')
-      const sequence =
-        (typeof lastSequence === 'number' ? lastSequence : 0) + 1
+      const sequence = (typeof lastSequence === 'number' ? lastSequence : 0) + 1
       const event = this.createEvent(sequence, id, 'update')
       await contacts.put(updated)
       await transaction
@@ -218,8 +218,7 @@ export class IndexedDbContactRepository implements ContactRepository {
       const lastSequence = await transaction
         .objectStore(METADATA_STORE)
         .get('lastSequence')
-      const sequence =
-        (typeof lastSequence === 'number' ? lastSequence : 0) + 1
+      const sequence = (typeof lastSequence === 'number' ? lastSequence : 0) + 1
       const event = this.createEvent(sequence, id, 'archive')
       await contacts.delete(id)
       await transaction
@@ -248,11 +247,15 @@ export class IndexedDbContactRepository implements ContactRepository {
     await this.run((database) => database.put(OUTBOX_STORE, event))
   }
 
-  async retryBlockedChanges(): Promise<number> {
+  async retryBlockedChanges(
+    operation?: ContactChangeEvent['operation'],
+  ): Promise<number> {
     return this.run(async (database) => {
       const transaction = database.transaction(OUTBOX_STORE, 'readwrite')
       const store = transaction.objectStore(OUTBOX_STORE)
-      const blocked = await store.index('by-status').getAll('blocked')
+      const blocked = (await store.index('by-status').getAll('blocked')).filter(
+        (event) => operation === undefined || event.operation === operation,
+      )
       for (const event of blocked) {
         await store.put({
           ...event,
