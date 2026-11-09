@@ -1,5 +1,6 @@
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -75,6 +76,22 @@ const savedContact: Contact = {
   updatedAt: 2,
 }
 
+function swipeContact(id: string, deltaX: number, deltaY = 0) {
+  const row = screen.getByTestId(`contact-row-${id}`)
+  fireEvent.pointerDown(row, {
+    pointerType: 'touch',
+    isPrimary: true,
+    clientX: 120,
+    clientY: 80,
+  })
+  fireEvent.pointerUp(row, {
+    pointerType: 'touch',
+    isPrimary: true,
+    clientX: 120 + deltaX,
+    clientY: 80 + deltaY,
+  })
+}
+
 describe('Samparka app shell', () => {
   it('opens on Contacts with the primary navigation visible', async () => {
     render(<App repository={makeRepository()} />)
@@ -91,6 +108,143 @@ describe('Samparka app shell', () => {
     expect(screen.getByRole('button', { name: 'Contacts' })).toHaveAttribute(
       'aria-current',
       'page',
+    )
+  })
+
+  it('reveals Call on a deliberate right swipe without opening the contact', async () => {
+    const repository = makeRepository([savedContact])
+    render(<App repository={repository} />)
+    await screen.findByTestId('contact-row-contact-1')
+
+    swipeContact(savedContact.id, 80)
+
+    expect(screen.getByRole('link', { name: 'Call Maya Rao' })).toHaveAttribute(
+      'href',
+      'tel:+915550100',
+    )
+    expect(repository.getById).not.toHaveBeenCalled()
+    expect(
+      screen.getByRole('heading', { name: 'Contacts' }),
+    ).toBeInTheDocument()
+  })
+
+  it('reveals WhatsApp on a deliberate left swipe using an international number', async () => {
+    const contact = { ...savedContact, phoneNumbers: ['+91 (98765) 43210'] }
+    render(<App repository={makeRepository([contact])} />)
+    await screen.findByTestId('contact-row-contact-1')
+
+    swipeContact(contact.id, -80)
+
+    expect(
+      screen.getByRole('link', { name: 'WhatsApp Maya Rao' }),
+    ).toHaveAttribute('href', 'https://wa.me/919876543210')
+  })
+
+  it('keeps vertical and diagonal movement from revealing actions', async () => {
+    render(<App repository={makeRepository([savedContact])} />)
+    await screen.findByTestId('contact-row-contact-1')
+
+    swipeContact(savedContact.id, 12, 90)
+    expect(
+      screen.queryByRole('link', { name: 'Call Maya Rao' }),
+    ).not.toBeInTheDocument()
+    swipeContact(savedContact.id, 70, 55)
+    expect(
+      screen.queryByRole('link', { name: 'Call Maya Rao' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('dismisses a revealed action by swiping back and closes the prior row', async () => {
+    const secondContact = {
+      ...savedContact,
+      id: 'contact-2',
+      name: 'Nila Das',
+      phoneNumbers: ['+91 98765 43210'],
+    }
+    render(<App repository={makeRepository([savedContact, secondContact])} />)
+    await screen.findByTestId('contact-row-contact-1')
+
+    swipeContact(savedContact.id, 80)
+    expect(
+      screen.getByRole('link', { name: 'Call Maya Rao' }),
+    ).toBeInTheDocument()
+    swipeContact(savedContact.id, -80)
+    expect(
+      screen.queryByRole('link', { name: 'Call Maya Rao' }),
+    ).not.toBeInTheDocument()
+
+    swipeContact(savedContact.id, 80)
+    swipeContact(secondContact.id, -80)
+    expect(
+      screen.queryByRole('link', { name: 'Call Maya Rao' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('link', { name: 'WhatsApp Nila Das' }),
+    ).toBeInTheDocument()
+    fireEvent.pointerDown(document.body, { pointerType: 'touch' })
+    expect(
+      screen.queryByRole('link', { name: 'WhatsApp Nila Das' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('asks which number to use instead of choosing arbitrarily', async () => {
+    const user = userEvent.setup()
+    const contact = {
+      ...savedContact,
+      phoneNumbers: ['555-0100', '+91 98765 43210'],
+    }
+    render(<App repository={makeRepository([contact])} />)
+    await screen.findByTestId('contact-row-contact-1')
+
+    swipeContact(contact.id, 80)
+    await user.click(screen.getByRole('button', { name: 'Call' }))
+
+    expect(
+      screen.getByRole('group', { name: 'Choose a number for call' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getAllByRole('link', { name: 'Call this number' }),
+    ).toHaveLength(2)
+    expect(
+      screen.getAllByRole('link', { name: 'Call this number' })[1],
+    ).toHaveAttribute('href', 'tel:+919876543210')
+  })
+
+  it('explains when a contact has no usable phone number', async () => {
+    const user = userEvent.setup()
+    const contact = { ...savedContact, phoneNumbers: [] }
+    render(<App repository={makeRepository([contact])} />)
+    await screen.findByTestId('contact-row-contact-1')
+
+    swipeContact(contact.id, 80)
+    await user.click(screen.getByRole('button', { name: 'Call' }))
+
+    expect(
+      screen.getByText('No phone number is saved for this contact.'),
+    ).toHaveAttribute('role', 'status')
+    expect(
+      screen.queryByRole('link', { name: /call/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('offers explicit Call and WhatsApp links in the contact detail view', async () => {
+    const user = userEvent.setup()
+    const contact = { ...savedContact, phoneNumbers: ['+91 98765 43210'] }
+    render(<App repository={makeRepository([contact])} />)
+    await user.click(
+      await screen.findByRole('button', { name: 'Maya Rao, +91 98765 43210' }),
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: 'Maya Rao' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Call' })).toHaveAttribute(
+      'href',
+      'tel:+919876543210',
+    )
+    expect(screen.getByRole('link', { name: 'WhatsApp' })).toHaveAttribute(
+      'href',
+      'https://wa.me/919876543210',
     )
   })
 
