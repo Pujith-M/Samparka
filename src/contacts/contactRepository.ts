@@ -12,6 +12,14 @@ const SYNC_LEASE_KEY = 'googleSheetsSyncLease'
 const SYNC_LEASE_DURATION_MS = 30_000
 
 type SyncLease = { owner: string; expiresAt: number }
+export const GOOGLE_SHEETS_CONSUMER_ID = 'googleSheets'
+
+type ConsumerChangeState = {
+  status: 'pending' | 'completed' | 'blocked'
+  attempts: number
+  nextAttemptAt?: number
+  lastError?: 'authorization' | 'transient' | 'ambiguous' | 'permanent'
+}
 
 export type ContactChangeEvent = {
   schemaVersion: 1
@@ -24,6 +32,7 @@ export type ContactChangeEvent = {
   attempts: number
   nextAttemptAt?: number
   lastError?: 'authorization' | 'transient' | 'ambiguous' | 'permanent'
+  consumers?: Record<string, ConsumerChangeState>
 }
 
 export type ImportResult = {
@@ -62,11 +71,17 @@ export interface ContactRepository {
   list(): Promise<Contact[]>
   update(id: string, changes: ContactUpdate): Promise<Contact>
   delete(id: string): Promise<void>
-  listPendingChanges(): Promise<ContactChangeEvent[]>
-  listChanges(): Promise<ContactChangeEvent[]>
+  listPendingChanges(consumerId?: string): Promise<ContactChangeEvent[]>
+  listChanges(consumerId?: string): Promise<ContactChangeEvent[]>
   updateChange(event: ContactChangeEvent): Promise<void>
+  updateConsumerChange(
+    consumerId: string,
+    event: ContactChangeEvent,
+  ): Promise<void>
+  getConsumerCheckpoint(consumerId: string): Promise<number>
   retryBlockedChanges(
     operation?: ContactChangeEvent['operation'],
+    consumerId?: string,
   ): Promise<number>
   importRemoteContacts(contacts: readonly Contact[]): Promise<ImportResult>
   acquireSyncLease(owner: string): Promise<boolean>
@@ -229,17 +244,25 @@ export class IndexedDbContactRepository implements ContactRepository {
     })
   }
 
-  listPendingChanges(): Promise<ContactChangeEvent[]> {
-    return this.run(async (database) =>
-      (
-        await database.getAllFromIndex(OUTBOX_STORE, 'by-status', 'pending')
-      ).sort((a, b) => a.sequence - b.sequence),
-    )
+  listPendingChanges(
+    consumerId = GOOGLE_SHEETS_CONSUMER_ID,
+  ): Promise<ContactChangeEvent[]> {
+    return this.run(async (database) => {
+      const events = await database.getAllFromIndex(OUTBOX_STORE, 'by-sequence')
+      return events
+        .map((event) => withConsumerState(event, consumerId))
+        .filter((event) => event.status === 'pending')
+        .sort((a, b) => a.sequence - b.sequence)
+    })
   }
 
-  listChanges(): Promise<ContactChangeEvent[]> {
+  listChanges(
+    consumerId = GOOGLE_SHEETS_CONSUMER_ID,
+  ): Promise<ContactChangeEvent[]> {
     return this.run(async (database) =>
-      (await database.getAllFromIndex(OUTBOX_STORE, 'by-sequence')).reverse(),
+      (await database.getAllFromIndex(OUTBOX_STORE, 'by-sequence'))
+        .map((event) => withConsumerState(event, consumerId))
+        .reverse(),
     )
   }
 
@@ -247,22 +270,119 @@ export class IndexedDbContactRepository implements ContactRepository {
     await this.run((database) => database.put(OUTBOX_STORE, event))
   }
 
+  async updateConsumerChange(
+    consumerId: string,
+    event: ContactChangeEvent,
+  ): Promise<void> {
+    await this.run(async (database) => {
+      const transaction = database.transaction(
+        [OUTBOX_STORE, METADATA_STORE],
+        'readwrite',
+      )
+      const outbox = transaction.objectStore(OUTBOX_STORE)
+      const stored = await outbox.get(event.eventId)
+      if (!stored) {
+        await transaction.done
+        return
+      }
+      const consumerState: ConsumerChangeState = {
+        status: event.status,
+        attempts: event.attempts,
+        nextAttemptAt: event.nextAttemptAt,
+        lastError: event.lastError,
+      }
+      const updated: ContactChangeEvent = {
+        ...stored,
+        consumers: {
+          ...stored.consumers,
+          [consumerId]: consumerState,
+        },
+      }
+      if (consumerId === GOOGLE_SHEETS_CONSUMER_ID) {
+        Object.assign(updated, consumerState)
+      }
+      await outbox.put(updated)
+
+      const events = (await outbox.getAll()).sort(
+        (left, right) => left.sequence - right.sequence,
+      )
+      const checkpointKey = consumerCheckpointKey(consumerId)
+      const storedCheckpoint = await transaction
+        .objectStore(METADATA_STORE)
+        .get(checkpointKey)
+      const previousCheckpoint =
+        typeof storedCheckpoint === 'number' ? storedCheckpoint : 0
+      let checkpoint = previousCheckpoint
+      for (const item of events) {
+        if (item.sequence <= checkpoint) continue
+        if (item.sequence !== checkpoint + 1) break
+        if (withConsumerState(item, consumerId).status !== 'completed') break
+        checkpoint = item.sequence
+      }
+      if (checkpoint > previousCheckpoint)
+        await transaction
+          .objectStore(METADATA_STORE)
+          .put(checkpoint, checkpointKey)
+      await transaction.done
+    })
+  }
+
+  getConsumerCheckpoint(consumerId: string): Promise<number> {
+    return this.run(async (database) => {
+      const transaction = database.transaction(
+        [OUTBOX_STORE, METADATA_STORE],
+        'readwrite',
+      )
+      const metadata = transaction.objectStore(METADATA_STORE)
+      const key = consumerCheckpointKey(consumerId)
+      const stored = await metadata.get(key)
+      const previous = typeof stored === 'number' ? stored : 0
+      let checkpoint = previous
+      const events = (
+        await transaction.objectStore(OUTBOX_STORE).getAll()
+      ).sort((left, right) => left.sequence - right.sequence)
+      for (const event of events) {
+        if (event.sequence <= checkpoint) continue
+        if (event.sequence !== checkpoint + 1) break
+        if (withConsumerState(event, consumerId).status !== 'completed') break
+        checkpoint = event.sequence
+      }
+      if (checkpoint > previous) await metadata.put(checkpoint, key)
+      await transaction.done
+      return checkpoint
+    })
+  }
+
   async retryBlockedChanges(
     operation?: ContactChangeEvent['operation'],
+    consumerId = GOOGLE_SHEETS_CONSUMER_ID,
   ): Promise<number> {
     return this.run(async (database) => {
       const transaction = database.transaction(OUTBOX_STORE, 'readwrite')
       const store = transaction.objectStore(OUTBOX_STORE)
-      const blocked = (await store.index('by-status').getAll('blocked')).filter(
-        (event) => operation === undefined || event.operation === operation,
+      const blocked = (await store.getAll()).filter(
+        (event) =>
+          withConsumerState(event, consumerId).status === 'blocked' &&
+          (operation === undefined || event.operation === operation),
       )
       for (const event of blocked) {
-        await store.put({
+        const consumerState = withConsumerState(event, consumerId)
+        const retried: ContactChangeEvent = {
           ...event,
-          status: 'pending',
-          lastError: undefined,
-          nextAttemptAt: undefined,
-        })
+          consumers: {
+            ...event.consumers,
+            [consumerId]: {
+              status: 'pending',
+              attempts: consumerState.attempts,
+            },
+          },
+        }
+        if (consumerId === GOOGLE_SHEETS_CONSUMER_ID) {
+          retried.status = 'pending'
+          retried.lastError = undefined
+          retried.nextAttemptAt = undefined
+        }
+        await store.put(retried)
       }
       await transaction.done
       return blocked.length
@@ -405,6 +525,27 @@ export class IndexedDbContactRepository implements ContactRepository {
     database.close()
     this.database = undefined
   }
+}
+
+function consumerCheckpointKey(consumerId: string): string {
+  return `consumerCheckpoint:${consumerId}`
+}
+
+function withConsumerState(
+  event: ContactChangeEvent,
+  consumerId: string,
+): ContactChangeEvent {
+  const state =
+    event.consumers?.[consumerId] ??
+    (consumerId === GOOGLE_SHEETS_CONSUMER_ID
+      ? {
+          status: event.status,
+          attempts: event.attempts,
+          nextAttemptAt: event.nextAttemptAt,
+          lastError: event.lastError,
+        }
+      : { status: 'pending' as const, attempts: 0 })
+  return { ...event, ...state }
 }
 
 function sameContactContent(left: Contact, right: Contact): boolean {

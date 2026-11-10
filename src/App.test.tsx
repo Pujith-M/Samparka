@@ -53,6 +53,8 @@ function makeRepository(initial: Contact[] = []): ContactRepository {
     listPendingChanges: vi.fn(async () => []),
     listChanges: vi.fn(async () => []),
     updateChange: vi.fn(async () => undefined),
+    updateConsumerChange: vi.fn(async () => undefined),
+    getConsumerCheckpoint: vi.fn(async () => 0),
     retryBlockedChanges: vi.fn(async () => 0),
     importRemoteContacts: vi.fn(async () => ({
       imported: 0,

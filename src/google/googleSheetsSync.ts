@@ -2,6 +2,7 @@ import type {
   ContactChangeEvent,
   ContactRepository,
 } from '../contacts/contactRepository'
+import { GOOGLE_SHEETS_CONSUMER_ID } from '../contacts/contactRepository'
 import { GoogleIntegrationError } from './googleSheets'
 import {
   GoogleSheetsContactAdapter,
@@ -119,7 +120,7 @@ async function processChanges(
   now: number,
   stillOwner: () => Promise<boolean> = async () => true,
 ): Promise<SyncResult> {
-  const events = await repository.listPendingChanges()
+  const events = await repository.listPendingChanges(GOOGLE_SHEETS_CONSUMER_ID)
   let completed = 0
   let blocked = 0
   for (const event of events) {
@@ -144,7 +145,7 @@ async function processChanges(
           busy: true,
         }
       }
-      await repository.updateChange({
+      await repository.updateConsumerChange(GOOGLE_SHEETS_CONSUMER_ID, {
         ...event,
         status: 'completed',
         lastError: undefined,
@@ -178,7 +179,7 @@ async function processChanges(
           : { status: 'pending' as const }),
         ...(nextAttemptAt ? { nextAttemptAt } : {}),
       }
-      await repository.updateChange(failed)
+      await repository.updateConsumerChange(GOOGLE_SHEETS_CONSUMER_ID, failed)
       if (failed.status === 'blocked') blocked += 1
       if (result === 'authorization' || result === 'transient') {
         return {

@@ -118,6 +118,39 @@ describe('contact model and IndexedDB repository', () => {
     ).toBe(true)
   })
 
+  it('keeps consumer progress independent and advances checkpoints contiguously', async () => {
+    await repository.create({ name: 'First', phoneNumbers: ['111'] })
+    await repository.create({ name: 'Second', phoneNumbers: ['222'] })
+    const [first, second] = await repository.listPendingChanges()
+
+    await repository.updateConsumerChange('analytics', {
+      ...second,
+      status: 'completed',
+    })
+    expect(await repository.getConsumerCheckpoint('analytics')).toBe(0)
+    expect(await repository.listPendingChanges('analytics')).toMatchObject([
+      { eventId: first.eventId, status: 'pending' },
+    ])
+    expect(await repository.listPendingChanges()).toHaveLength(2)
+
+    await repository.updateConsumerChange('analytics', {
+      ...first,
+      status: 'completed',
+    })
+    expect(await repository.getConsumerCheckpoint('analytics')).toBe(2)
+    expect(await repository.getConsumerCheckpoint('googleSheets')).toBe(0)
+
+    await repository.updateConsumerChange('googleSheets', {
+      ...first,
+      status: 'completed',
+    })
+    expect(await repository.getConsumerCheckpoint('googleSheets')).toBe(1)
+    expect(await repository.getConsumerCheckpoint('analytics')).toBe(2)
+    expect(await repository.listPendingChanges()).toMatchObject([
+      { eventId: second.eventId, status: 'pending' },
+    ])
+  })
+
   it('does not enqueue a delete for a missing contact', async () => {
     await repository.delete('missing-contact')
     expect(await repository.listPendingChanges()).toEqual([])
