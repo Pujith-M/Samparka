@@ -277,6 +277,23 @@ describe('contact model and IndexedDB repository', () => {
     expect(await repository.getById(original.id)).toEqual(original)
   })
 
+  it('isolates fallback sync leases by consumer', async () => {
+    expect(await repository.acquireSyncLease('google-tab-a')).toBe(true)
+    expect(await repository.acquireSyncLease('google-tab-b')).toBe(false)
+    expect(
+      await repository.acquireSyncLease('analytics-tab', 'analytics'),
+    ).toBe(true)
+
+    await repository.releaseSyncLease('google-tab-a')
+    expect(await repository.acquireSyncLease('google-tab-b')).toBe(true)
+    expect(await repository.renewSyncLease('analytics-tab', 'analytics')).toBe(
+      true,
+    )
+    expect(await repository.renewSyncLease('google-tab-b', 'analytics')).toBe(
+      false,
+    )
+  })
+
   it('surfaces browser storage failures through a repository error', async () => {
     const originalIndexedDb = globalThis.indexedDB
     Object.defineProperty(globalThis, 'indexedDB', {

@@ -19,7 +19,7 @@ type SyncResult = {
 
 const LEASE_RENEW_INTERVAL_MS = 10_000
 
-let activeRun: Promise<SyncResult> | undefined
+const activeRuns = new Map<string, Promise<SyncResult>>()
 
 /** Processes the durable local outbox in sequence. The access token is never persisted. */
 export function syncGoogleChanges(
@@ -29,17 +29,21 @@ export function syncGoogleChanges(
   token: string,
   now = Date.now(),
 ): Promise<SyncResult> {
+  const consumerId = GOOGLE_SHEETS_CONSUMER_ID
+  const activeRun = activeRuns.get(consumerId)
   if (activeRun) return activeRun
-  activeRun = runWithCrossTabLock(
+  const run = runWithCrossTabLock(
     repository,
     adapter,
     location,
     token,
     now,
+    consumerId,
   ).finally(() => {
-    activeRun = undefined
+    if (activeRuns.get(consumerId) === run) activeRuns.delete(consumerId)
   })
-  return activeRun
+  activeRuns.set(consumerId, run)
+  return run
 }
 
 async function runWithCrossTabLock(
@@ -48,25 +52,29 @@ async function runWithCrossTabLock(
   location: SheetLocation,
   token: string,
   now: number,
+  consumerId: string,
 ): Promise<SyncResult> {
   if (navigator.locks) {
     return navigator.locks.request(
-      'samparka-google-sheets-sync',
+      `samparka-${consumerId}-sync`,
       { ifAvailable: true },
       async (lock) => {
-        if (!lock) return busyResult(repository)
+        if (!lock) return busyResult(repository, consumerId)
         return processChanges(repository, adapter, location, token, now)
       },
     )
   }
 
-  return runWithLease(repository, adapter, location, token, now)
+  return runWithLease(repository, adapter, location, token, now, consumerId)
 }
 
-async function busyResult(repository: ContactRepository): Promise<SyncResult> {
+async function busyResult(
+  repository: ContactRepository,
+  consumerId: string,
+): Promise<SyncResult> {
   return {
     completed: 0,
-    pending: (await repository.listPendingChanges()).length,
+    pending: (await repository.listPendingChanges(consumerId)).length,
     blocked: 0,
     paused: true,
     busy: true,
@@ -79,15 +87,17 @@ async function runWithLease(
   location: SheetLocation,
   token: string,
   now: number,
+  consumerId: string,
 ): Promise<SyncResult> {
   const owner = crypto.randomUUID()
-  if (!(await repository.acquireSyncLease(owner))) return busyResult(repository)
+  if (!(await repository.acquireSyncLease(owner, consumerId)))
+    return busyResult(repository, consumerId)
 
   let leaseAlive = true
   const renewLease = async () => {
     if (!leaseAlive) return false
     try {
-      leaseAlive = await repository.renewSyncLease(owner)
+      leaseAlive = await repository.renewSyncLease(owner, consumerId)
     } catch {
       leaseAlive = false
     }
@@ -105,10 +115,11 @@ async function runWithLease(
       token,
       now,
       renewLease,
+      consumerId,
     )
   } finally {
     clearInterval(heartbeat)
-    await repository.releaseSyncLease(owner)
+    await repository.releaseSyncLease(owner, consumerId)
   }
 }
 
@@ -119,15 +130,16 @@ async function processChanges(
   token: string,
   now: number,
   stillOwner: () => Promise<boolean> = async () => true,
+  consumerId = GOOGLE_SHEETS_CONSUMER_ID,
 ): Promise<SyncResult> {
-  const events = await repository.listPendingChanges(GOOGLE_SHEETS_CONSUMER_ID)
+  const events = await repository.listPendingChanges(consumerId)
   let completed = 0
   let blocked = 0
   for (const event of events) {
     if (!(await stillOwner())) {
       return {
         completed,
-        pending: (await repository.listPendingChanges()).length,
+        pending: (await repository.listPendingChanges(consumerId)).length,
         blocked,
         paused: true,
         busy: true,
@@ -139,13 +151,13 @@ async function processChanges(
       if (!(await stillOwner())) {
         return {
           completed,
-          pending: (await repository.listPendingChanges()).length,
+          pending: (await repository.listPendingChanges(consumerId)).length,
           blocked,
           paused: true,
           busy: true,
         }
       }
-      await repository.updateConsumerChange(GOOGLE_SHEETS_CONSUMER_ID, {
+      await repository.updateConsumerChange(consumerId, {
         ...event,
         status: 'completed',
         lastError: undefined,
@@ -156,7 +168,7 @@ async function processChanges(
       if (!(await stillOwner())) {
         return {
           completed,
-          pending: (await repository.listPendingChanges()).length,
+          pending: (await repository.listPendingChanges(consumerId)).length,
           blocked,
           paused: true,
           busy: true,
@@ -179,7 +191,7 @@ async function processChanges(
           : { status: 'pending' as const }),
         ...(nextAttemptAt ? { nextAttemptAt } : {}),
       }
-      await repository.updateConsumerChange(GOOGLE_SHEETS_CONSUMER_ID, failed)
+      await repository.updateConsumerChange(consumerId, failed)
       if (failed.status === 'blocked') blocked += 1
       if (result === 'authorization' || result === 'transient') {
         return {
@@ -192,7 +204,7 @@ async function processChanges(
       }
     }
   }
-  const remaining = (await repository.listPendingChanges()).length
+  const remaining = (await repository.listPendingChanges(consumerId)).length
   return { completed, pending: remaining, blocked, paused: false, busy: false }
 }
 

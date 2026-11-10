@@ -8,7 +8,6 @@ const DATABASE_VERSION = 2
 const CONTACT_STORE = 'contacts'
 const OUTBOX_STORE = 'outbox'
 const METADATA_STORE = 'metadata'
-const SYNC_LEASE_KEY = 'googleSheetsSyncLease'
 const SYNC_LEASE_DURATION_MS = 30_000
 
 type SyncLease = { owner: string; expiresAt: number }
@@ -84,9 +83,9 @@ export interface ContactRepository {
     consumerId?: string,
   ): Promise<number>
   importRemoteContacts(contacts: readonly Contact[]): Promise<ImportResult>
-  acquireSyncLease(owner: string): Promise<boolean>
-  renewSyncLease(owner: string): Promise<boolean>
-  releaseSyncLease(owner: string): Promise<void>
+  acquireSyncLease(owner: string, consumerId?: string): Promise<boolean>
+  renewSyncLease(owner: string, consumerId?: string): Promise<boolean>
+  releaseSyncLease(owner: string, consumerId?: string): Promise<void>
 }
 
 export class IndexedDbContactRepository implements ContactRepository {
@@ -389,11 +388,15 @@ export class IndexedDbContactRepository implements ContactRepository {
     })
   }
 
-  async acquireSyncLease(owner: string): Promise<boolean> {
+  async acquireSyncLease(
+    owner: string,
+    consumerId = GOOGLE_SHEETS_CONSUMER_ID,
+  ): Promise<boolean> {
     return this.run(async (database) => {
       const transaction = database.transaction(METADATA_STORE, 'readwrite')
       const store = transaction.objectStore(METADATA_STORE)
-      const lease = await store.get(SYNC_LEASE_KEY)
+      const leaseKey = syncLeaseKey(consumerId)
+      const lease = await store.get(leaseKey)
       const now = Date.now()
       if (lease && typeof lease !== 'number' && lease.expiresAt > now) {
         await transaction.done
@@ -401,18 +404,22 @@ export class IndexedDbContactRepository implements ContactRepository {
       }
       await store.put(
         { owner, expiresAt: now + SYNC_LEASE_DURATION_MS },
-        SYNC_LEASE_KEY,
+        leaseKey,
       )
       await transaction.done
       return true
     })
   }
 
-  async renewSyncLease(owner: string): Promise<boolean> {
+  async renewSyncLease(
+    owner: string,
+    consumerId = GOOGLE_SHEETS_CONSUMER_ID,
+  ): Promise<boolean> {
     return this.run(async (database) => {
       const transaction = database.transaction(METADATA_STORE, 'readwrite')
       const store = transaction.objectStore(METADATA_STORE)
-      const lease = await store.get(SYNC_LEASE_KEY)
+      const leaseKey = syncLeaseKey(consumerId)
+      const lease = await store.get(leaseKey)
       const now = Date.now()
       if (
         !lease ||
@@ -425,20 +432,24 @@ export class IndexedDbContactRepository implements ContactRepository {
       }
       await store.put(
         { owner, expiresAt: now + SYNC_LEASE_DURATION_MS },
-        SYNC_LEASE_KEY,
+        leaseKey,
       )
       await transaction.done
       return true
     })
   }
 
-  async releaseSyncLease(owner: string): Promise<void> {
+  async releaseSyncLease(
+    owner: string,
+    consumerId = GOOGLE_SHEETS_CONSUMER_ID,
+  ): Promise<void> {
     await this.run(async (database) => {
       const transaction = database.transaction(METADATA_STORE, 'readwrite')
       const store = transaction.objectStore(METADATA_STORE)
-      const lease = await store.get(SYNC_LEASE_KEY)
+      const leaseKey = syncLeaseKey(consumerId)
+      const lease = await store.get(leaseKey)
       if (lease && typeof lease !== 'number' && lease.owner === owner) {
-        await store.delete(SYNC_LEASE_KEY)
+        await store.delete(leaseKey)
       }
       await transaction.done
     })
@@ -529,6 +540,12 @@ export class IndexedDbContactRepository implements ContactRepository {
 
 function consumerCheckpointKey(consumerId: string): string {
   return `consumerCheckpoint:${consumerId}`
+}
+
+function syncLeaseKey(consumerId: string): string {
+  return consumerId === GOOGLE_SHEETS_CONSUMER_ID
+    ? 'googleSheetsSyncLease'
+    : `consumerSyncLease:${consumerId}`
 }
 
 function withConsumerState(
