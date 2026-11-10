@@ -61,6 +61,7 @@ describe('Google Sheets durable consumer', () => {
       1,
     )
     expect(first).toMatchObject({ completed: 0, pending: 1, paused: true })
+    expect(first.retryAt).toBeGreaterThan(1)
     expect(await repository.listPendingChanges()).toMatchObject([
       { attempts: 1, lastError: 'transient' },
     ])

@@ -130,7 +130,24 @@ export function GoogleSheetsSpike({
 
   useEffect(() => {
     if (!connected || !token || !spreadsheet) return
+    let cancelled = false
+    let retryTimer: number | undefined
+    const scheduleRetry = (retryAt: number) => {
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+      if (cancelled) return
+      retryTimer = window.setTimeout(
+        () => {
+          retryTimer = undefined
+          resumeSync()
+        },
+        Math.max(0, retryAt - Date.now()),
+      )
+    }
     const resumeSync = () => {
+      if (retryTimer !== undefined) {
+        window.clearTimeout(retryTimer)
+        retryTimer = undefined
+      }
       if (!navigator.onLine || document.visibilityState !== 'visible') return
       if (token.expiresAt <= Date.now()) {
         setConnected(false)
@@ -152,15 +169,22 @@ export function GoogleSheetsSpike({
           token.value,
         )
         await refreshQueue()
+        if (cancelled) return
+        if (result.retryAt) scheduleRetry(result.retryAt)
         if (result.busy)
           setMessage('Another Samparka tab is already backing up changes.')
         else if (result.blocked)
           setMessage(`${result.blocked} backup change(s) need review.`)
+        else if (result.retryAt)
+          setMessage(
+            'A backup retry is scheduled automatically after a short delay.',
+          )
         else if (result.paused)
           setMessage(
             'Backup is paused until Google access or network connectivity returns.',
           )
       })().catch((error: unknown) => {
+        if (cancelled) return
         setMessage(
           error instanceof Error ? error.message : 'Could not resume backup.',
         )
@@ -170,8 +194,10 @@ export function GoogleSheetsSpike({
     window.addEventListener('online', resumeSync)
     document.addEventListener('visibilitychange', resumeSync)
     return () => {
+      cancelled = true
       window.removeEventListener('online', resumeSync)
       document.removeEventListener('visibilitychange', resumeSync)
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
     }
   }, [connected, token, spreadsheet, repository, refreshQueue])
   const connect = () =>

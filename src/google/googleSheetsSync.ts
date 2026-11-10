@@ -15,6 +15,7 @@ type SyncResult = {
   blocked: number
   paused: boolean
   busy: boolean
+  retryAt?: number
 }
 
 const LEASE_RENEW_INTERVAL_MS = 10_000
@@ -78,6 +79,7 @@ async function busyResult(
     blocked: 0,
     paused: true,
     busy: true,
+    retryAt: Date.now() + 5_000,
   }
 }
 
@@ -135,6 +137,7 @@ async function processChanges(
   const events = await repository.listPendingChanges(consumerId)
   let completed = 0
   let blocked = 0
+  let retryAt: number | undefined
   for (const event of events) {
     if (!(await stillOwner())) {
       return {
@@ -143,9 +146,13 @@ async function processChanges(
         blocked,
         paused: true,
         busy: true,
+        retryAt: Date.now() + 5_000,
       }
     }
-    if (event.nextAttemptAt && event.nextAttemptAt > now) break
+    if (event.nextAttemptAt && event.nextAttemptAt > now) {
+      retryAt = event.nextAttemptAt
+      break
+    }
     try {
       await processEvent(repository, adapter, location, token, event)
       if (!(await stillOwner())) {
@@ -155,6 +162,7 @@ async function processChanges(
           blocked,
           paused: true,
           busy: true,
+          retryAt: Date.now() + 5_000,
         }
       }
       await repository.updateConsumerChange(consumerId, {
@@ -172,6 +180,7 @@ async function processChanges(
           blocked,
           paused: true,
           busy: true,
+          retryAt: Date.now() + 5_000,
         }
       }
       const result = classifyFailure(error)
@@ -200,12 +209,20 @@ async function processChanges(
           blocked,
           paused: true,
           busy: false,
+          retryAt: failed.nextAttemptAt,
         }
       }
     }
   }
   const remaining = (await repository.listPendingChanges(consumerId)).length
-  return { completed, pending: remaining, blocked, paused: false, busy: false }
+  return {
+    completed,
+    pending: remaining,
+    blocked,
+    paused: false,
+    busy: false,
+    retryAt,
+  }
 }
 
 async function processEvent(
