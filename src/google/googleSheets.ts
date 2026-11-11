@@ -53,11 +53,10 @@ declare global {
 
 export type GoogleConfig = { clientId: string; apiKey: string; appId: string }
 export type SelectedSpreadsheet = { id: string; name: string }
-export type SheetPreview = {
+export type SpreadsheetMetadata = {
   title: string
   worksheet?: string
   worksheets: Array<{ title: string; sheetId: number }>
-  values: string[][]
 }
 
 export function worksheetRange(worksheet: string, cells: string): string {
@@ -252,32 +251,29 @@ export class SheetsApi {
     return response.json() as Promise<T>
   }
 
-  async preview(
+  async spreadsheetMetadata(
     spreadsheetId: string,
     token: string,
     worksheet?: string,
-  ): Promise<SheetPreview> {
+  ): Promise<SpreadsheetMetadata> {
     const root = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}`
     const meta = await this.request<{
       properties: { title: string }
       sheets: Array<{ properties: { title: string; sheetId: number } }>
     }>(`${root}?fields=properties.title,sheets.properties`, token)
-    const selectedWorksheet =
-      worksheet &&
-      meta.sheets.some((sheet) => sheet.properties.title === worksheet)
-        ? worksheet
-        : meta.sheets[0]?.properties.title
-    const values = selectedWorksheet
-      ? await this.request<{ values?: string[][] }>(
-          `${root}/values/${encodeURIComponent(worksheetRange(selectedWorksheet, 'A1:H6'))}`,
-          token,
-        )
-      : {}
+    const selectedWorksheet = worksheet
+      ? meta.sheets.find((sheet) => sheet.properties.title === worksheet)
+          ?.properties.title
+      : meta.sheets[0]?.properties.title
+    if (worksheet && !selectedWorksheet)
+      throw new GoogleIntegrationError(
+        'The selected worksheet no longer exists. Choose a worksheet and retry.',
+        'api',
+      )
     return {
       title: meta.properties.title,
       worksheet: selectedWorksheet,
       worksheets: meta.sheets.map(({ properties }) => properties),
-      values: values.values ?? [],
     }
   }
 

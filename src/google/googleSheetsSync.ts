@@ -29,6 +29,7 @@ export function syncGoogleChanges(
   location: SheetLocation,
   token: string,
   now = Date.now(),
+  shouldContinue: () => boolean = () => true,
 ): Promise<SyncResult> {
   const consumerId = GOOGLE_SHEETS_CONSUMER_ID
   const activeRun = activeRuns.get(consumerId)
@@ -40,6 +41,7 @@ export function syncGoogleChanges(
     token,
     now,
     consumerId,
+    shouldContinue,
   ).finally(() => {
     if (activeRuns.get(consumerId) === run) activeRuns.delete(consumerId)
   })
@@ -54,6 +56,7 @@ async function runWithCrossTabLock(
   token: string,
   now: number,
   consumerId: string,
+  shouldContinue: () => boolean,
 ): Promise<SyncResult> {
   if (navigator.locks) {
     return navigator.locks.request(
@@ -61,12 +64,29 @@ async function runWithCrossTabLock(
       { ifAvailable: true },
       async (lock) => {
         if (!lock) return busyResult(repository, consumerId)
-        return processChanges(repository, adapter, location, token, now)
+        return processChanges(
+          repository,
+          adapter,
+          location,
+          token,
+          now,
+          undefined,
+          consumerId,
+          shouldContinue,
+        )
       },
     )
   }
 
-  return runWithLease(repository, adapter, location, token, now, consumerId)
+  return runWithLease(
+    repository,
+    adapter,
+    location,
+    token,
+    now,
+    consumerId,
+    shouldContinue,
+  )
 }
 
 async function busyResult(
@@ -90,6 +110,7 @@ async function runWithLease(
   token: string,
   now: number,
   consumerId: string,
+  shouldContinue: () => boolean,
 ): Promise<SyncResult> {
   const owner = crypto.randomUUID()
   if (!(await repository.acquireSyncLease(owner, consumerId)))
@@ -118,6 +139,7 @@ async function runWithLease(
       now,
       renewLease,
       consumerId,
+      shouldContinue,
     )
   } finally {
     clearInterval(heartbeat)
@@ -133,12 +155,21 @@ async function processChanges(
   now: number,
   stillOwner: () => Promise<boolean> = async () => true,
   consumerId = GOOGLE_SHEETS_CONSUMER_ID,
+  shouldContinue: () => boolean = () => true,
 ): Promise<SyncResult> {
   const events = await repository.listPendingChanges(consumerId)
   let completed = 0
   let blocked = 0
   let retryAt: number | undefined
   for (const event of events) {
+    if (!shouldContinue())
+      return {
+        completed,
+        pending: (await repository.listPendingChanges(consumerId)).length,
+        blocked,
+        paused: true,
+        busy: false,
+      }
     if (!(await stillOwner())) {
       return {
         completed,
@@ -155,7 +186,7 @@ async function processChanges(
     }
     try {
       await processEvent(repository, adapter, location, token, event)
-      if (!(await stillOwner())) {
+      if (!shouldContinue() || !(await stillOwner())) {
         return {
           completed,
           pending: (await repository.listPendingChanges(consumerId)).length,
@@ -173,7 +204,7 @@ async function processChanges(
       })
       completed += 1
     } catch (error) {
-      if (!(await stillOwner())) {
+      if (!shouldContinue() || !(await stillOwner())) {
         return {
           completed,
           pending: (await repository.listPendingChanges(consumerId)).length,

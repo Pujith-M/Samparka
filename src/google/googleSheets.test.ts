@@ -17,24 +17,14 @@ describe('SheetsApi', () => {
     )
   })
 
-  it('reads spreadsheet metadata and a worksheet preview with the user token', async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json({
-          properties: { title: 'People' },
-          sheets: [{ properties: { title: 'Contacts', sheetId: 1 } }],
-        }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({
-          values: [
-            ['ID', 'Name'],
-            ['c-1', 'Ada'],
-          ],
-        }),
-      )
-    const result = await new SheetsApi(fetcher).preview(
+  it('reads spreadsheet metadata with the user token without loading cell contents', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(
+      Response.json({
+        properties: { title: 'People' },
+        sheets: [{ properties: { title: 'Contacts', sheetId: 1 } }],
+      }),
+    )
+    const result = await new SheetsApi(fetcher).spreadsheetMetadata(
       'sheet/id',
       'in-memory-token',
     )
@@ -42,15 +32,31 @@ describe('SheetsApi', () => {
       title: 'People',
       worksheet: 'Contacts',
       worksheets: [{ title: 'Contacts', sheetId: 1 }],
-      values: [
-        ['ID', 'Name'],
-        ['c-1', 'Ada'],
-      ],
     })
     expect(fetcher.mock.calls[0][1]?.headers).toMatchObject({
       Authorization: 'Bearer in-memory-token',
     })
-    expect(String(fetcher.mock.calls[1][0])).toContain('Contacts!A1%3AH6')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not silently substitute another worksheet when the saved one is missing', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(
+      Response.json({
+        properties: { title: 'People' },
+        sheets: [{ properties: { title: 'Contacts', sheetId: 1 } }],
+      }),
+    )
+    await expect(
+      new SheetsApi(fetcher).spreadsheetMetadata(
+        'sheet',
+        'token',
+        'Old worksheet',
+      ),
+    ).rejects.toMatchObject({
+      code: 'api',
+      message: expect.stringContaining('no longer exists'),
+    })
+    expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
   it('appends a row with reversible JSON array cells', async () => {
@@ -131,9 +137,11 @@ describe('SheetsApi', () => {
     const api = new SheetsApi(
       vi.fn().mockResolvedValue(new Response('', { status: 401 })),
     )
-    await expect(api.preview('sheet', 'expired-token')).rejects.toMatchObject<
-      Partial<GoogleIntegrationError>
-    >({ code: 'expired' })
+    await expect(
+      api.spreadsheetMetadata('sheet', 'expired-token'),
+    ).rejects.toMatchObject<Partial<GoogleIntegrationError>>({
+      code: 'expired',
+    })
   })
 
   it('updates only the specified known row range', async () => {
@@ -154,10 +162,10 @@ describe('SheetsApi', () => {
         .fn()
         .mockResolvedValue(new Response('private details', { status: 403 })),
     )
-    await expect(api.preview('sheet', 'token')).rejects.toThrow(
+    await expect(api.spreadsheetMetadata('sheet', 'token')).rejects.toThrow(
       'Google Sheets request failed (403)',
     )
-    await expect(api.preview('sheet', 'token')).rejects.not.toThrow(
+    await expect(api.spreadsheetMetadata('sheet', 'token')).rejects.not.toThrow(
       'private details',
     )
   })

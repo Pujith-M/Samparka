@@ -78,4 +78,40 @@ describe('Google Sheets durable consumer', () => {
     expect(fetcher.mock.calls[3][1]?.method).toBe('PUT')
     expect(await repository.listPendingChanges()).toEqual([])
   })
+
+  it('leaves an in-flight event pending when disconnect occurs before acknowledgement', async () => {
+    Object.defineProperty(navigator, 'locks', {
+      configurable: true,
+      value: {
+        request: (
+          _name: string,
+          _options: unknown,
+          callback: (lock: object) => Promise<unknown>,
+        ) => callback({}),
+      },
+    })
+    const contact = await repository.create({
+      name: 'Mira Rao',
+      phoneNumbers: ['+91 98765 43210'],
+    })
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ values: [[...CONTACT_HEADERS]] }))
+      .mockResolvedValueOnce(Response.json({ updatedRange: 'Contacts!A2:J2' }))
+    const adapter = new GoogleSheetsContactAdapter(new SheetsApi(fetcher))
+    let checks = 0
+
+    const result = await syncGoogleChanges(
+      repository,
+      adapter,
+      { spreadsheetId: 'test-sheet', worksheet: 'Contacts' },
+      'token',
+      Date.now(),
+      () => ++checks === 1,
+    )
+
+    expect(result).toMatchObject({ completed: 0, pending: 1, paused: true })
+    expect(await repository.listPendingChanges()).toHaveLength(1)
+    expect(await repository.getById(contact.id)).toBeDefined()
+  })
 })

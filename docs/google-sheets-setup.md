@@ -4,7 +4,7 @@ Google Sheets is optional and does not affect local contact storage. Use a dedic
 
 ## Google Cloud setup
 
-1. Create or choose a Google Cloud project and enable **Google Sheets API** and **Google Picker API**. This spike does not call the Drive REST API, so it does not need to be enabled for its current flow.
+1. Create or choose a Google Cloud project and enable **Google Sheets API** and **Google Picker API**. The current integration does not call the Drive REST API, so it does not need to be enabled for its current flow.
 2. Configure the Google Auth Platform branding and OAuth consent screen. Add a test user while the app is in Testing status.
 3. Create an OAuth Client ID with application type **Web application**. Add both local development origin (`http://localhost:5173`) and the exact production origin, for example `https://<account>.github.io`. An origin has no path; register a custom domain origin separately if one is later used.
 4. Create an API key under **APIs & Services → Credentials → Create credentials → API key**. Restrict **Application restrictions** to Websites and allow `http://localhost:5173/*`, your production app origin (for example `https://<account>.github.io/*`), and `https://docs.google.com/*` (Picker runs in a Google-hosted iframe). Under **API restrictions**, select **Google Picker API**. Add Google Drive API only if a future feature calls Drive REST endpoints directly, as described by the [Picker setup guide](https://developers.google.com/workspace/drive/picker/guides/web-picker-sample). The OAuth client ID, API key, and numeric Cloud project number are public browser configuration, not secrets.
@@ -30,8 +30,23 @@ Never put a client secret, service-account credential, private key, refresh toke
 6. Select a worksheet with the complete ten-column schema. Verify a sheet missing `id` or `archivedAt` is rejected without changes. Create a test contact, delete it, and verify its matching sheet row is archived rather than physically deleted; then restore it and verify the archive marker is cleared.
 7. Go offline, edit a contact, reload the app, then reconnect and return to the app while the token remains valid. Verify the event remains pending offline and retries after reconnect/resume. Confirm a second open tab does not run the consumer concurrently.
 8. Revoke the app in Google Account third-party connections or wait for token expiry. Verify local data and pending events remain, and the UI asks for reconnection. Disconnect and confirm the selected-sheet setting and token are cleared while the outbox remains.
-9. Inspect browser storage and logs: the access token must not be persisted or logged, and contact contents must not appear in diagnostics.
+9. Inspect browser storage and browser logs: the access token must not be persisted or logged, and contact contents must not appear in logs.
 
-The sample-row action is retained for adapter feasibility checks and should only be used with the disposable test spreadsheet.
+## Connection status and destination changes
+
+The selected spreadsheet and worksheet are remembered in this browser, but the Google access token remains in memory only. After a reload, the saved destination is shown as **Reconnect required** until the user requests fresh authorization. Samparka verifies spreadsheet metadata, the chosen worksheet, and every row against the managed Samparka schema using reads before it reports the destination as ready. Google access verification does not prove write access; the UI says backup is confirmed only after a successful remote write and durable outbox acknowledgement.
+
+The connection panel reports the destination, worksheet, current pending and blocked counts, and the last confirmed backup time. The timestamp is updated only when the durable consumer reports one or more completed writes. Disconnect requires confirmation, removes the selected destination and in-memory token, and stops the current consumer before it begins another event. It leaves the Google file, local contacts, outbox history, checkpoints, and backup timestamp intact.
+
+The Google consumer is bound to a spreadsheet and worksheet in browser storage. If a different destination is selected while pending or blocked work remains, backup pauses and the UI requires the user to choose **Retarget pending and blocked changes to this spreadsheet**. Completed events stay completed and are not replayed; unresolved events remain in the durable outbox until explicitly retargeted. A remote operation already in flight when disconnect occurs may finish, but the event remains unacknowledged and is reconciled idempotently on the next connection.
+
+Additional manual checks:
+
+1. Reload with a saved destination. Confirm the UI shows **Reconnect required**, then authorize and confirm the UI reaches ready only after metadata, worksheet, and schema reads succeed.
+2. Remove or rename the selected worksheet, change its required headers, or revoke access. Confirm the UI shows a recoverable error and never reports the destination ready.
+3. With pending and blocked events on spreadsheet A, disconnect and select spreadsheet B. Confirm backup stays paused until explicitly retargeted. Cancel the retarget by leaving the page and reload; confirm the pause is still enforced.
+4. Disconnect during a queued backup. Confirm no next event starts, the in-flight event is not acknowledged if disconnect happens before its acknowledgement, and reconnect to A safely reconciles it.
+5. Disconnect with no pending work, then connect to B. Confirm B can be verified and used without an unnecessary retarget prompt.
+6. Open two app tabs, then disconnect or select a different destination in one tab. Confirm the other tab pauses its consumer when its local storage binding changes and requires fresh authorization for the new destination.
 
 Automated adapter tests mock Google responses. They cannot replace this real-account smoke check, and no live Google Cloud credentials are committed to the repository.
