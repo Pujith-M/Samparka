@@ -120,11 +120,15 @@ The production output is written to `dist/`.
 
 ```sh
 npm run test
+npm run test:e2e
 npm run lint
 npm run format:check
 ```
 
-Run `npm run format` to apply Prettier formatting. The smoke test uses Vitest and React Testing Library.
+Run `npx playwright install chromium` once to install the browser used by the
+end-to-end smoke test. Run `npm run format` to apply Prettier formatting. Unit
+and component checks use Vitest and React Testing Library; browser smoke coverage
+uses Playwright.
 
 ## PWA and offline behavior
 

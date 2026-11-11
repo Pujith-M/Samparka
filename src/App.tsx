@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { ContactValidationError, normalizeContact } from './contacts/contact'
 import type { Contact, ContactInput } from './contacts/contact'
-import { contactRepository } from './contacts/contactRepository'
+import { ContactStorageError, contactRepository } from './contacts/contactRepository'
 import type { ContactRepository } from './contacts/contactRepository'
 import { getAvailableTags, selectContacts } from './contacts/contactSelectors'
 import type { ContactSortOrder } from './contacts/contactSelectors'
@@ -105,12 +105,12 @@ function App({ repository = contactRepository }: { repository?: ContactRepositor
   const [sortOrder, setSortOrder] = useState<ContactSortOrder>('name')
   const availableTags = useMemo(() => getAvailableTags(contacts), [contacts])
   const visibleContacts = useMemo(() => selectContacts(contacts, { query, selectedTag, sortOrder }), [contacts, query, selectedTag, sortOrder])
-  const loadContacts = useCallback(async () => { setLoading(true); setError(null); try { setContacts(await repository.list()) } catch { setError('Your contacts could not be loaded. Try again.') } finally { setLoading(false) } }, [repository])
+  const loadContacts = useCallback(async () => { setLoading(true); setError(null); try { setContacts(await repository.list()) } catch (loadError) { setError(loadError instanceof ContactStorageError ? loadError.message : 'Your contacts could not be loaded. Try again.') } finally { setLoading(false) } }, [repository])
   // Load persisted contacts when the repository changes.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void loadContacts() }, [loadContacts])
 
-  const saveContact = async (values: FormValues) => { setBusy(true); setError(null); try { const saved = selected ? await repository.update(selected.id, values) : await repository.create(values); setSelected(saved); await loadContacts(); setView('detail') } catch { setError('The contact could not be saved. Your entries are still here to retry.') } finally { setBusy(false) } }
+  const saveContact = async (values: FormValues) => { setBusy(true); setError(null); try { const saved = selected ? await repository.update(selected.id, values) : await repository.create(values); setSelected(saved); await loadContacts(); setView('detail') } catch (saveError) { setError(saveError instanceof ContactStorageError ? saveError.message : 'The contact could not be saved. Your entries are still here to retry.') } finally { setBusy(false) } }
   const openContact = async (contact: Contact) => { setRevealedContactAction(null); setError(null); try { const latest = await repository.getById(contact.id); if (!latest) { setError('This contact no longer exists.'); await loadContacts(); return } setSelected(latest); setView('detail') } catch { setError('This contact could not be opened.') } }
   const deleteContact = async () => { if (!selected || !window.confirm(`Delete ${selected.name}? This cannot be undone.`)) return; setBusy(true); try { await repository.delete(selected.id); setSelected(undefined); await loadContacts(); setView('contacts') } catch { setError('The contact was not deleted. Try again.') } finally { setBusy(false) } }
   const pageTitle = view === 'recent' ? 'Recent' : 'Contacts'

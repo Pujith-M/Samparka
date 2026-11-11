@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import '@testing-library/jest-dom/vitest'
 import type { Contact } from './contacts/contact'
+import { ContactStorageError } from './contacts/contactRepository'
 import type { ContactRepository } from './contacts/contactRepository'
 
 afterEach(() => cleanup())
@@ -301,6 +302,29 @@ describe('Samparka app shell', () => {
       await screen.findByRole('heading', { name: 'Maya Rao' }),
     ).toBeInTheDocument()
     expect(repository.create).toHaveBeenCalledOnce()
+  })
+
+  it('explains when browser storage is full and keeps the contact form available', async () => {
+    const user = userEvent.setup()
+    const repository = makeRepository()
+    vi.mocked(repository.create).mockRejectedValue(
+      new ContactStorageError(
+        'Browser storage is full. Free up space in your browser and retry.',
+        'quota',
+      ),
+    )
+    render(<App repository={repository} />)
+    await user.click(
+      await screen.findByRole('button', { name: /add your first contact/i }),
+    )
+    await user.type(screen.getByLabelText(/^Name/), 'Maya Rao')
+    await user.type(screen.getByLabelText('Phone number 1'), '555-0100')
+    await user.click(screen.getByRole('button', { name: 'Save contact' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /browser storage is full/i,
+    )
+    expect(screen.getByLabelText(/^Name/)).toHaveValue('Maya Rao')
   })
 
   it('loads, edits, and deletes an existing contact only after confirmation', async () => {

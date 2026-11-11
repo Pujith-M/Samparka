@@ -4,7 +4,7 @@ Use this checklist before enabling or announcing a public beta. The Google integ
 
 ## Before a release
 
-- [ ] Run `npm test`, `npm run lint`, and `npm run build`.
+- [ ] Run `npm test`, `npm run test:e2e`, `npm run lint`, and `npm run build`.
 - [ ] Confirm GitHub Actions validates the build artifact and only deploys from `main`.
 - [ ] Verify the production manifest, icon paths, service-worker scope, and `/Samparka/` asset base in the artifact.
 - [ ] Open the deployed app directly and refresh it; confirm the app shell loads offline after its first successful load.

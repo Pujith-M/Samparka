@@ -312,4 +312,27 @@ describe('contact model and IndexedDB repository', () => {
       })
     }
   })
+
+  it('identifies quota failures with actionable storage guidance', async () => {
+    await repository.list()
+    const originalTransaction = IDBDatabase.prototype.transaction
+    Object.defineProperty(IDBDatabase.prototype, 'transaction', {
+      configurable: true,
+      value: () => {
+        throw new DOMException('Storage limit reached', 'QuotaExceededError')
+      },
+    })
+    try {
+      await expect(repository.list()).rejects.toMatchObject({
+        name: 'ContactStorageError',
+        code: 'quota',
+        message: /browser storage is full/i,
+      })
+    } finally {
+      Object.defineProperty(IDBDatabase.prototype, 'transaction', {
+        configurable: true,
+        value: originalTransaction,
+      })
+    }
+  })
 })

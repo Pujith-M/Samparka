@@ -58,7 +58,11 @@ interface SamparkaDatabase extends DBSchema {
 }
 
 export class ContactStorageError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  constructor(
+    message: string,
+    readonly code: 'quota' | 'storage' = 'storage',
+    options?: ErrorOptions,
+  ) {
     super(message, options)
     this.name = 'ContactStorageError'
   }
@@ -128,8 +132,12 @@ export class IndexedDbContactRepository implements ContactRepository {
       return await operation(await this.open())
     } catch (error) {
       if (error instanceof ContactStorageError) throw error
+      const quotaExceeded = isQuotaExceeded(error)
       throw new ContactStorageError(
-        'Could not access contacts in browser storage.',
+        quotaExceeded
+          ? 'Browser storage is full. Free up space in your browser and retry.'
+          : 'Could not access contacts in browser storage.',
+        quotaExceeded ? 'quota' : 'storage',
         { cause: error },
       )
     }
@@ -536,6 +544,19 @@ export class IndexedDbContactRepository implements ContactRepository {
     database.close()
     this.database = undefined
   }
+}
+
+function isQuotaExceeded(error: unknown): boolean {
+  let current = error
+  const visited = new Set<object>()
+  while (current !== null && typeof current === 'object') {
+    if (visited.has(current)) return false
+    visited.add(current)
+    const candidate = current as { cause?: unknown; name?: unknown }
+    if (candidate.name === 'QuotaExceededError') return true
+    current = candidate.cause
+  }
+  return false
 }
 
 function consumerCheckpointKey(consumerId: string): string {
